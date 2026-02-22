@@ -73,8 +73,8 @@ const getGreeting = () => { const h = new Date().getHours(); return h < 12 ? "Gu
 // PERSISTENCE
 // ═══════════════════════════════════════════════════════
 const getDefaultData = () => ({ name: "", income: 0, theme: "light", categories: defaultCategories, transactions: [], fixedCosts: [], goals: [], pushEnabled: false, budgetThreshold: 80, wizardDone: false });
-const loadData = () => { try { const r = localStorage.getItem(STORAGE_KEY); if (r) return { ...getDefaultData(), ...JSON.parse(r) }; } catch(e){} return getDefaultData(); };
-const saveData = (d) => localStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+const loadData = () => { try { const r = localStorage.getItem(STORAGE_KEY); if (r) return { ...getDefaultData(), ...JSON.parse(r) }; } catch(e){ /* localStorage not available */ } return getDefaultData(); };
+const saveData = (d) => { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch(e){ /* localStorage not available - data lives in React state only */ } };
 
 // ═══════════════════════════════════════════════════════
 // FIX #3: SWIPE-TO-CLOSE HOOK
@@ -689,14 +689,32 @@ function AddTxSheet({ open, onClose, data, setData }) {
   const savingCats = data.categories.filter(c => SAVE_CATS.includes(c.id));
 
   const save = () => {
-    const amt = parseFloat(amount);
-    if (!amt || amt <= 0 || !title.trim()) return;
+    // Handle German comma decimals (iOS keyboard)
+    const amtStr = String(amount).replace(",", ".");
+    const amt = parseFloat(amtStr);
+    if (isNaN(amt) || amt <= 0) return;
+    if (!title.trim()) return;
+
+    // Budget warning for expenses
+    if (type === "expense") {
+      const totalFC = data.fixedCosts.reduce((a, fc) => a + (fc.yearly ? fc.amount / 12 : fc.amount), 0);
+      const budget = data.income - totalFC;
+      const alreadySpent = data.transactions.filter(t => isThisMonth(t.date) && t.type === "expense").reduce((a, t) => a + t.amount, 0);
+      const newTotal = alreadySpent + amt;
+      if (newTotal > budget && budget > 0) {
+        const over = newTotal - budget;
+        if (!confirm(`⚠️ Achtung: Diese Ausgabe überschreitet dein verfügbares Budget um €${fmt(over)}!\n\nBudget: €${fmt(budget)}\nBereits ausgegeben: €${fmt(alreadySpent)}\nDiese Ausgabe: €${fmt(amt)}\n\nTrotzdem speichern?`)) return;
+      }
+    }
+
     const txType = type === "saving" ? "saving" : type;
     const finalCat = type === "income" ? "sonstiges" : cat;
     const tx = { id: uid(), type: txType, amount: amt, title: title.trim(), date, cat: finalCat, note: note.trim() };
-    const updated = { ...data, transactions: [...data.transactions, tx] };
-    setData(updated);
-    saveData(updated);
+    setData(prev => {
+      const updated = { ...prev, transactions: [...prev.transactions, tx] };
+      saveData(updated);
+      return updated;
+    });
     onClose();
   };
 
@@ -718,7 +736,10 @@ function AddTxSheet({ open, onClose, data, setData }) {
         <div className="form-group">
           <label className="form-label">Betrag</label>
           <div className="input--amount"><span className="input--amount__symbol">€</span>
-            <input className="input--amount__field" type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0,00" inputMode="decimal" step="0.01" style={{ fontSize:28 }} autoFocus />
+            <input className="input--amount__field" type="text" value={amount} onChange={e => {
+              const v = e.target.value.replace(/[^0-9.,]/g, "");
+              setAmount(v);
+            }} placeholder="0,00" inputMode="decimal" style={{ fontSize:28 }} autoFocus />
           </div>
         </div>
 
@@ -764,12 +785,17 @@ function FCSheet({ open, onClose, editItem, data, setData }) {
 
   if (!open) return null;
   const save = () => {
-    const amt = parseFloat(amount);
-    if (!name.trim() || !amt || amt <= 0) return;
-    let updated;
-    if (editItem) { updated = { ...data, fixedCosts: data.fixedCosts.map(fc => fc.id === editItem.id ? { ...fc, name: name.trim(), amount: amt, cat, yearly, dueDay: parseInt(dueDay) || 1 } : fc) }; }
-    else { updated = { ...data, fixedCosts: [...data.fixedCosts, { id: uid(), name: name.trim(), amount: amt, cat, yearly, dueDay: parseInt(dueDay) || 1 }] }; }
-    setData(updated); saveData(updated); onClose();
+    const amt = parseFloat(String(amount).replace(",", "."));
+    if (!name.trim() || isNaN(amt) || amt <= 0) return;
+    const dd = parseInt(dueDay) || 1;
+    setData(prev => {
+      let updated;
+      if (editItem) { updated = { ...prev, fixedCosts: prev.fixedCosts.map(fc => fc.id === editItem.id ? { ...fc, name: name.trim(), amount: amt, cat, yearly, dueDay: dd } : fc) }; }
+      else { updated = { ...prev, fixedCosts: [...prev.fixedCosts, { id: uid(), name: name.trim(), amount: amt, cat, yearly, dueDay: dd }] }; }
+      saveData(updated);
+      return updated;
+    });
+    onClose();
   };
 
   return (
@@ -778,7 +804,7 @@ function FCSheet({ open, onClose, editItem, data, setData }) {
         <div className="sheet__handle"/>
         <div className="sheet__title">{editItem ? "Fixkosten bearbeiten" : "Fixkosten hinzufügen"}</div>
         <div className="form-group"><label className="form-label">Name</label><input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="z.B. Miete, Netflix …"/></div>
-        <div className="form-group"><label className="form-label">Betrag</label><div className="input--amount"><span className="input--amount__symbol">€</span><input className="input--amount__field" type="number" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0" inputMode="decimal" style={{ fontSize:28 }}/></div></div>
+        <div className="form-group"><label className="form-label">Betrag</label><div className="input--amount"><span className="input--amount__symbol">€</span><input className="input--amount__field" type="text" value={amount} onChange={e => setAmount(e.target.value.replace(/[^0-9.,]/g, ""))} placeholder="0" inputMode="decimal" style={{ fontSize:28 }}/></div></div>
         <div className="form-group"><label className="form-label">Rhythmus</label><div className="seg seg--2"><button className={`seg__opt ${!yearly?"seg__opt--on":""}`} onClick={() => setYearly(false)}>Monatlich</button><button className={`seg__opt ${yearly?"seg__opt--on":""}`} onClick={() => setYearly(true)}>Jährlich</button></div></div>
         <div className="form-group"><label className="form-label">Kategorie</label><CatPicker categories={data.categories} selected={cat} onSelect={setCat}/></div>
         <div className="form-group"><label className="form-label">Fälligkeit (Tag)</label><input className="input" type="number" min="1" max="28" value={dueDay} onChange={e => setDueDay(e.target.value)} inputMode="numeric"/></div>
@@ -796,10 +822,14 @@ function GoalSheet({ open, onClose, data, setData }) {
   const saveCats = data.categories.filter(c => SAVE_CATS.includes(c.id));
   if (!open) return null;
   const save = () => {
-    const t = parseFloat(target);
-    if (!name.trim() || !t || t <= 0) return;
-    const updated = { ...data, goals: [...data.goals, { id: uid(), name: name.trim(), target: t, cat }] };
-    setData(updated); saveData(updated); onClose(); setName(""); setTarget("");
+    const t = parseFloat(String(target).replace(",", "."));
+    if (!name.trim() || isNaN(t) || t <= 0) return;
+    setData(prev => {
+      const updated = { ...prev, goals: [...prev.goals, { id: uid(), name: name.trim(), target: t, cat }] };
+      saveData(updated);
+      return updated;
+    });
+    onClose(); setName(""); setTarget("");
   };
   return (
     <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
@@ -807,7 +837,7 @@ function GoalSheet({ open, onClose, data, setData }) {
         <div className="sheet__handle"/>
         <div className="sheet__title">Sparziel hinzufügen</div>
         <div className="form-group"><label className="form-label">Name</label><input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="z.B. Notgroschen, Urlaub …"/></div>
-        <div className="form-group"><label className="form-label">Monatliches Ziel</label><div className="input--amount"><span className="input--amount__symbol">€</span><input className="input--amount__field" type="number" value={target} onChange={e => setTarget(e.target.value)} placeholder="0" inputMode="decimal" style={{ fontSize:28 }}/></div></div>
+        <div className="form-group"><label className="form-label">Monatliches Ziel</label><div className="input--amount"><span className="input--amount__symbol">€</span><input className="input--amount__field" type="text" value={target} onChange={e => setTarget(e.target.value.replace(/[^0-9.,]/g, ""))} placeholder="0" inputMode="decimal" style={{ fontSize:28 }}/></div></div>
         <div className="form-group"><label className="form-label">Kategorie</label><CatPicker categories={saveCats.length ? saveCats : [data.categories.at(-1)]} selected={cat} onSelect={setCat}/></div>
         <div style={{ padding:"16px 24px 0" }}><button className="btn btn--primary" onClick={save}>{icons.check} Speichern</button><button className="btn btn--ghost" style={{ marginTop:8 }} onClick={onClose}>Abbrechen</button></div>
       </div>
@@ -930,7 +960,7 @@ function TransactionsScreen({ data, setData, openAddTx }) {
     return l;
   }, [data.transactions, filter]);
   const groups = useMemo(() => { const g = {}; txs.forEach(t => { const k = monthLabel(t.date); if (!g[k]) g[k] = []; g[k].push(t); }); return g; }, [txs]);
-  const del = (id) => { const u = { ...data, transactions: data.transactions.filter(t => t.id !== id) }; setData(u); saveData(u); };
+  const del = (id) => { setData(prev => { const u = { ...prev, transactions: prev.transactions.filter(t => t.id !== id) }; saveData(u); return u; }); };
 
   return (
     <>
@@ -973,7 +1003,7 @@ function SavingsScreen({ data, setData }) {
     return ms;
   }, [data.transactions]);
   const mx = Math.max(...months.map(m => m.v), 1);
-  const delGoal = (id) => { const u = { ...data, goals: data.goals.filter(g => g.id !== id) }; setData(u); saveData(u); };
+  const delGoal = (id) => { setData(prev => { const u = { ...prev, goals: prev.goals.filter(g => g.id !== id) }; saveData(u); return u; }); };
 
   return (
     <>
@@ -998,7 +1028,7 @@ function FixedCostsScreen({ data, setData }) {
   const [editItem, setEditItem] = useState(null);
   const total = useMemo(() => data.fixedCosts.reduce((a,fc) => a + (fc.yearly ? fc.amount/12 : fc.amount), 0), [data.fixedCosts]);
   const pct = Math.min((total / Math.max(data.income, 1)) * 100, 100);
-  const del = (id) => { const u = { ...data, fixedCosts: data.fixedCosts.filter(f => f.id !== id) }; setData(u); saveData(u); };
+  const del = (id) => { setData(prev => { const u = { ...prev, fixedCosts: prev.fixedCosts.filter(f => f.id !== id) }; saveData(u); return u; }); };
 
   return (
     <>
@@ -1025,20 +1055,27 @@ function FixedCostsScreen({ data, setData }) {
 }
 
 function SettingsScreen({ data, setData, toggleTheme }) {
-  const addCat = (name) => { const id = name.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"") + "-" + uid().slice(-3); const colors = ["#E57373","#FFA726","#9575CD","#5C6BC0","#42A5F5","#26C6DA","#66BB6A","#FFCA28"]; const u = { ...data, categories: [...data.categories, { id, name, icon:"star", color:colors[data.categories.length % colors.length] }] }; setData(u); saveData(u); };
-  const remCat = (id) => { const u = { ...data, categories: data.categories.filter(c => c.id !== id) }; setData(u); saveData(u); };
+  const addCat = (name) => {
+    const id = name.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"") + "-" + uid().slice(-3);
+    const colors = ["#E57373","#FFA726","#9575CD","#5C6BC0","#42A5F5","#26C6DA","#66BB6A","#FFCA28"];
+    setData(prev => {
+      const u = { ...prev, categories: [...prev.categories, { id, name, icon:"star", color:colors[prev.categories.length % colors.length] }] };
+      saveData(u); return u;
+    });
+  };
+  const remCat = (id) => { setData(prev => { const u = { ...prev, categories: prev.categories.filter(c => c.id !== id) }; saveData(u); return u; }); };
   const handleExport = () => { const b = new Blob([JSON.stringify(data, null, 2)], { type:"application/json" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `budgetsnap-${getToday()}.json`; a.click(); URL.revokeObjectURL(u); };
   const handlePrint = () => window.print();
-  const handleDelete = () => { if (confirm("Wirklich ALLE Daten unwiderruflich löschen?")) { localStorage.removeItem(STORAGE_KEY); window.location.reload(); } };
+  const handleDelete = () => { if (confirm("Wirklich ALLE Daten unwiderruflich löschen?")) { try { localStorage.removeItem(STORAGE_KEY); } catch(e){} window.location.reload(); } };
 
   return (
     <>
       <div className="topbar"><div className="topbar__inner"><div><div className="topbar__greeting">BudgetSnap</div><div className="topbar__title"><em>Einstellungen</em></div></div></div></div>
       <div className="scroll">
-        <div className="settings-section"><div className="settings-label">Einkommen</div><div className="glass" style={{ padding:16 }}><label className="form-label">Monatliches Nettoeinkommen</label><div className="input--amount"><span className="input--amount__symbol">€</span><input className="input--amount__field" type="number" value={data.income} onChange={e => { const v = parseFloat(e.target.value) || 0; const u = { ...data, income: v }; setData(u); saveData(u); }} inputMode="decimal" style={{ fontSize:24 }}/></div></div></div>
+        <div className="settings-section"><div className="settings-label">Einkommen</div><div className="glass" style={{ padding:16 }}><label className="form-label">Monatliches Nettoeinkommen</label><div className="input--amount"><span className="input--amount__symbol">€</span><input className="input--amount__field" type="number" value={data.income} onChange={e => { const v = parseFloat(e.target.value) || 0; setData(prev => { const u = { ...prev, income: v }; saveData(u); return u; }); }} inputMode="decimal" style={{ fontSize:24 }}/></div></div></div>
         <div className="settings-section"><div className="settings-label">Kategorien</div><div className="glass" style={{ padding:16 }}><TagInput categories={data.categories} onAdd={addCat} onRemove={remCat}/><div style={{ fontSize:11, color:"var(--text-3)", marginTop:8, fontStyle:"italic" }}>Enter = Hinzufügen · Backspace = Entfernen</div></div></div>
         <div className="settings-section"><div className="settings-label">Darstellung</div><div className="glass" style={{ padding:16 }}><div className="seg seg--2"><button className={`seg__opt ${data.theme === "light" ? "seg__opt--on" : ""}`} onClick={() => toggleTheme("light")}>☀️ Hell</button><button className={`seg__opt ${data.theme === "dark" ? "seg__opt--on" : ""}`} onClick={() => toggleTheme("dark")}>🌙 Dunkel</button></div></div></div>
-        <div className="settings-section"><div className="settings-label">Benachrichtigungen</div><div className="glass" style={{ padding:16 }}><div style={{ display:"flex", alignItems:"center", gap:16 }}><div style={{ flex:1 }}><div style={{ fontWeight:600 }}>Budget-Erinnerung</div><div style={{ fontSize:11, color:"var(--text-3)", marginTop:2 }}>Warnung ab {data.budgetThreshold}%</div></div><button className={`toggle ${data.pushEnabled ? "toggle--on" : ""}`} onClick={() => { const u = { ...data, pushEnabled:!data.pushEnabled }; setData(u); saveData(u); }} role="switch" aria-checked={data.pushEnabled}/></div></div></div>
+        <div className="settings-section"><div className="settings-label">Benachrichtigungen</div><div className="glass" style={{ padding:16 }}><div style={{ display:"flex", alignItems:"center", gap:16 }}><div style={{ flex:1 }}><div style={{ fontWeight:600 }}>Budget-Erinnerung</div><div style={{ fontSize:11, color:"var(--text-3)", marginTop:2 }}>Warnung ab {data.budgetThreshold}%</div></div><button className={`toggle ${data.pushEnabled ? "toggle--on" : ""}`} onClick={() => { setData(prev => { const u = { ...prev, pushEnabled:!prev.pushEnabled }; saveData(u); return u; }); }} role="switch" aria-checked={data.pushEnabled}/></div></div></div>
         <div className="settings-section"><div className="settings-label">Datenschutz</div><div className="glass" style={{ padding:16 }}>{["Alle Daten lokal auf deinem Gerät","Keine Server, keine Cloud","Kein Account, kein Tracking","DSGVO-konform"].map(t => <div key={t} style={{ fontSize:12, color:"var(--text-2)", padding:"4px 0", display:"flex", alignItems:"center", gap:8 }}><span style={{ color:"var(--accent)" }}>{icons.check}</span> {t}</div>)}</div></div>
         <div className="settings-section"><div className="settings-label">Daten</div><div className="glass" style={{ overflow:"hidden" }}>
           <button className="set-row" onClick={handleExport}><div className="set-row__icon">{icons.download}</div><div className="set-row__info"><div className="set-row__title">JSON Export</div><div className="set-row__sub">Daten als JSON sichern</div></div><div style={{ color:"var(--text-3)" }}>{icons.chevron}</div></button>
@@ -1047,7 +1084,7 @@ function SettingsScreen({ data, setData, toggleTheme }) {
           <div style={{ height:1, background:"var(--rule)", margin:"0 16px" }}/>
           <button className="set-row" onClick={handleDelete} style={{ color:"var(--danger)" }}><div className="set-row__icon" style={{ color:"var(--danger)" }}>{icons.trash}</div><div className="set-row__info"><div className="set-row__title" style={{ color:"var(--danger)" }}>Alle Daten löschen</div><div className="set-row__sub">Recht auf Vergessenwerden</div></div><div style={{ color:"var(--danger)" }}>{icons.chevron}</div></button>
         </div></div>
-        <div className="glass" style={{ padding:24, textAlign:"center", marginBottom:24 }}><div style={{ fontFamily:"'DM Serif Display',serif", fontSize:24, fontStyle:"italic", marginBottom:4 }}>BudgetSnap</div><div style={{ fontSize:11, color:"var(--text-3)" }}>Version 3.1</div></div>
+        <div className="glass" style={{ padding:24, textAlign:"center", marginBottom:24 }}><div style={{ fontFamily:"'DM Serif Display',serif", fontSize:24, fontStyle:"italic", marginBottom:4 }}>BudgetSnap</div><div style={{ fontSize:11, color:"var(--text-3)" }}>Version 3.2</div></div>
       </div>
     </>
   );
@@ -1062,16 +1099,26 @@ export default function BudgetSnap() {
   const [addTxOpen, setAddTxOpen] = useState(false);
 
   useEffect(() => { document.documentElement.setAttribute("data-theme", data.theme); }, [data.theme]);
-  const toggleTheme = useCallback((explicit) => { const next = explicit || (data.theme === "dark" ? "light" : "dark"); const u = { ...data, theme: next }; setData(u); saveData(u); }, [data]);
+  const toggleTheme = useCallback((explicit) => {
+    setData(prev => {
+      const next = explicit || (prev.theme === "dark" ? "light" : "dark");
+      const u = { ...prev, theme: next };
+      saveData(u);
+      return u;
+    });
+  }, []);
   const goTo = useCallback((t) => setTab(t), []);
 
   if (!data.wizardDone) {
     return (<><style>{styles}</style><div className="app-root"><Wizard onComplete={(wd) => {
-      const u = { ...data, ...wd, wizardDone: true,
-        fixedCosts: wd.fixedCosts?.length ? wd.fixedCosts : [],
-        goals: data.goals.length ? data.goals : [{ id: uid(), name: "Notgroschen", target: 300, cat: "sparen" }, { id: uid(), name: "ETF / Altersvorsorge", target: 150, cat: "etf" }],
-      };
-      setData(u); saveData(u);
+      setData(prev => {
+        const u = { ...prev, ...wd, wizardDone: true,
+          fixedCosts: wd.fixedCosts?.length ? wd.fixedCosts : [],
+          goals: prev.goals.length ? prev.goals : [{ id: uid(), name: "Notgroschen", target: 300, cat: "sparen" }, { id: uid(), name: "ETF / Altersvorsorge", target: 150, cat: "etf" }],
+        };
+        saveData(u);
+        return u;
+      });
     }}/></div></>);
   }
 
