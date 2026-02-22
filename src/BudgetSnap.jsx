@@ -669,7 +669,9 @@ function Wizard({ onComplete }) {
 
 // ═══════════════════════════════════════════════════════
 // SHEETS — FIX #3 Swipe, #4 Date, #5 Sparen, #6 Save
+// UPDATED: validation alerts + touch-safe buttons + overlay touch-close
 // ═══════════════════════════════════════════════════════
+
 function AddTxSheet({ open, onClose, data, setData }) {
   const [type, setType] = useState("expense");
   const [amount, setAmount] = useState("");
@@ -680,37 +682,77 @@ function AddTxSheet({ open, onClose, data, setData }) {
   const swipe = useSwipeDown(onClose);
 
   useEffect(() => {
-    if (open) { setType("expense"); setAmount(""); setTitle(""); setCat("essen"); setDate(getToday()); setNote(""); }
+    if (open) {
+      setType("expense");
+      setAmount("");
+      setTitle("");
+      setCat("essen");
+      setDate(getToday());
+      setNote("");
+    }
   }, [open]);
 
   if (!open) return null;
 
-  const expenseCats = data.categories.filter(c => !SAVE_CATS.includes(c.id));
-  const savingCats = data.categories.filter(c => SAVE_CATS.includes(c.id));
+  const expenseCats = data.categories.filter((c) => !SAVE_CATS.includes(c.id));
+  const savingCats = data.categories.filter((c) => SAVE_CATS.includes(c.id));
 
   const save = () => {
     // Handle German comma decimals (iOS keyboard)
     const amtStr = String(amount).replace(",", ".");
     const amt = parseFloat(amtStr);
-    if (isNaN(amt) || amt <= 0) return;
-    if (!title.trim()) return;
+
+    if (isNaN(amt) || amt <= 0) {
+      alert("Bitte einen gültigen Betrag eingeben.");
+      return;
+    }
+    if (!title.trim()) {
+      alert("Bitte eine Bezeichnung eingeben.");
+      return;
+    }
 
     // Budget warning for expenses
     if (type === "expense") {
-      const totalFC = data.fixedCosts.reduce((a, fc) => a + (fc.yearly ? fc.amount / 12 : fc.amount), 0);
+      const totalFC = data.fixedCosts.reduce(
+        (a, fc) => a + (fc.yearly ? fc.amount / 12 : fc.amount),
+        0
+      );
       const budget = data.income - totalFC;
-      const alreadySpent = data.transactions.filter(t => isThisMonth(t.date) && t.type === "expense").reduce((a, t) => a + t.amount, 0);
+      const alreadySpent = data.transactions
+        .filter((t) => isThisMonth(t.date) && t.type === "expense")
+        .reduce((a, t) => a + t.amount, 0);
       const newTotal = alreadySpent + amt;
+
       if (newTotal > budget && budget > 0) {
         const over = newTotal - budget;
-        if (!confirm(`⚠️ Achtung: Diese Ausgabe überschreitet dein verfügbares Budget um €${fmt(over)}!\n\nBudget: €${fmt(budget)}\nBereits ausgegeben: €${fmt(alreadySpent)}\nDiese Ausgabe: €${fmt(amt)}\n\nTrotzdem speichern?`)) return;
+        if (
+          !confirm(
+            `⚠️ Achtung: Diese Ausgabe überschreitet dein verfügbares Budget um €${fmt(
+              over
+            )}!\n\nBudget: €${fmt(
+              budget
+            )}\nBereits ausgegeben: €${fmt(
+              alreadySpent
+            )}\nDiese Ausgabe: €${fmt(amt)}\n\nTrotzdem speichern?`
+          )
+        )
+          return;
       }
     }
 
     const txType = type === "saving" ? "saving" : type;
     const finalCat = type === "income" ? "sonstiges" : cat;
-    const tx = { id: uid(), type: txType, amount: amt, title: title.trim(), date, cat: finalCat, note: note.trim() };
-    setData(prev => {
+    const tx = {
+      id: uid(),
+      type: txType,
+      amount: amt,
+      title: title.trim(),
+      date,
+      cat: finalCat,
+      note: note.trim(),
+    };
+
+    setData((prev) => {
       const updated = { ...prev, transactions: [...prev.transactions, tx] };
       saveData(updated);
       return updated;
@@ -719,51 +761,133 @@ function AddTxSheet({ open, onClose, data, setData }) {
   };
 
   return (
-    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="sheet" ref={swipe.sheetRef} onTouchStart={swipe.onTouchStart} onTouchMove={swipe.onTouchMove} onTouchEnd={swipe.onTouchEnd}>
-        <div className="sheet__handle"/>
+    <div
+      className="overlay"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onTouchEnd={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="sheet"
+        ref={swipe.sheetRef}
+        onTouchStart={swipe.onTouchStart}
+        onTouchMove={swipe.onTouchMove}
+        onTouchEnd={swipe.onTouchEnd}
+      >
+        <div className="sheet__handle" />
         <div className="sheet__title">Buchung hinzufügen</div>
 
         <div className="form-group">
           <label className="form-label">Art der Buchung</label>
           <div className="seg seg--3">
-            {[["expense","Ausgabe"],["income","Einnahme"],["saving","Sparen"]].map(([t,l]) => (
-              <button key={t} className={`seg__opt ${type === t ? "seg__opt--on" : ""}`} onClick={() => { setType(t); if (t === "saving") setCat("sparen"); else if (t === "expense") setCat("essen"); }}>{l}</button>
+            {[
+              ["expense", "Ausgabe"],
+              ["income", "Einnahme"],
+              ["saving", "Sparen"],
+            ].map(([t, l]) => (
+              <button
+                key={t}
+                className={`seg__opt ${type === t ? "seg__opt--on" : ""}`}
+                onClick={() => {
+                  setType(t);
+                  if (t === "saving") setCat("sparen");
+                  else if (t === "expense") setCat("essen");
+                }}
+              >
+                {l}
+              </button>
             ))}
           </div>
         </div>
 
         <div className="form-group">
           <label className="form-label">Betrag</label>
-          <div className="input--amount"><span className="input--amount__symbol">€</span>
-            <input className="input--amount__field" type="text" value={amount} onChange={e => {
-              const v = e.target.value.replace(/[^0-9.,]/g, "");
-              setAmount(v);
-            }} placeholder="0,00" inputMode="decimal" style={{ fontSize:28 }} autoFocus />
+          <div className="input--amount">
+            <span className="input--amount__symbol">€</span>
+            <input
+              className="input--amount__field"
+              type="text"
+              value={amount}
+              onChange={(e) => {
+                const v = e.target.value.replace(/[^0-9.,]/g, "");
+                setAmount(v);
+              }}
+              placeholder="0,00"
+              inputMode="decimal"
+              style={{ fontSize: 28 }}
+              autoFocus
+            />
           </div>
         </div>
 
         <div className="form-group">
           <label className="form-label">Bezeichnung</label>
-          <input className="input" value={title} onChange={e => setTitle(e.target.value)} placeholder={type === "saving" ? "z.B. Notgroschen, ETF …" : "z.B. Rewe, Tankstelle …"} />
+          <input
+            className="input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={
+              type === "saving"
+                ? "z.B. Notgroschen, ETF …"
+                : "z.B. Rewe, Tankstelle …"
+            }
+          />
         </div>
 
-        {type === "expense" && <div className="form-group"><label className="form-label">Kategorie</label><CatPicker categories={expenseCats} selected={cat} onSelect={setCat}/></div>}
-        {type === "saving" && <div className="form-group"><label className="form-label">Sparziel</label><CatPicker categories={savingCats} selected={cat} onSelect={setCat}/></div>}
+        {type === "expense" && (
+          <div className="form-group">
+            <label className="form-label">Kategorie</label>
+            <CatPicker categories={expenseCats} selected={cat} onSelect={setCat} />
+          </div>
+        )}
+        {type === "saving" && (
+          <div className="form-group">
+            <label className="form-label">Sparziel</label>
+            <CatPicker categories={savingCats} selected={cat} onSelect={setCat} />
+          </div>
+        )}
 
         <div className="form-group">
           <label className="form-label">Datum</label>
-          <input className="input" type="date" value={date} onChange={e => setDate(e.target.value)} />
+          <input
+            className="input"
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+          />
         </div>
 
         <div className="form-group">
           <label className="form-label">Notiz (optional)</label>
-          <input className="input" value={note} onChange={e => setNote(e.target.value)} placeholder="Optionale Notiz …" />
+          <input
+            className="input"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Optionale Notiz …"
+          />
         </div>
 
-        <div style={{ padding:"16px 24px 0" }}>
-          <button className="btn btn--primary" onClick={save}>{icons.check} Speichern</button>
-          <button className="btn btn--ghost" style={{ marginTop:8 }} onClick={onClose}>Abbrechen</button>
+        <div style={{ padding: "16px 24px 0" }}>
+          <button
+            className="btn btn--primary"
+            onClick={save}
+            onTouchEnd={(e) => {
+              e.stopPropagation(); // Prevent interference with overlay touch handlers
+              save();
+            }}
+          >
+            {icons.check} Speichern
+          </button>
+          <button
+            className="btn btn--ghost"
+            style={{ marginTop: 8 }}
+            onClick={onClose}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+          >
+            Abbrechen
+          </button>
         </div>
       </div>
     </div>
@@ -779,36 +903,167 @@ function FCSheet({ open, onClose, editItem, data, setData }) {
   const swipe = useSwipeDown(onClose);
 
   useEffect(() => {
-    if (editItem) { setName(editItem.name); setAmount(editItem.amount.toString()); setCat(editItem.cat); setYearly(editItem.yearly); setDueDay(editItem.dueDay?.toString() || "1"); }
-    else { setName(""); setAmount(""); setCat("miete"); setYearly(false); setDueDay("1"); }
+    if (editItem) {
+      setName(editItem.name);
+      setAmount(editItem.amount.toString());
+      setCat(editItem.cat);
+      setYearly(editItem.yearly);
+      setDueDay(editItem.dueDay?.toString() || "1");
+    } else {
+      setName("");
+      setAmount("");
+      setCat("miete");
+      setYearly(false);
+      setDueDay("1");
+    }
   }, [editItem, open]);
 
   if (!open) return null;
+
   const save = () => {
     const amt = parseFloat(String(amount).replace(",", "."));
-    if (!name.trim() || isNaN(amt) || amt <= 0) return;
+
+    if (!name.trim()) {
+      alert("Bitte einen Namen eingeben.");
+      return;
+    }
+    if (isNaN(amt) || amt <= 0) {
+      alert("Bitte einen gültigen Betrag eingeben.");
+      return;
+    }
+
     const dd = parseInt(dueDay) || 1;
-    setData(prev => {
+
+    setData((prev) => {
       let updated;
-      if (editItem) { updated = { ...prev, fixedCosts: prev.fixedCosts.map(fc => fc.id === editItem.id ? { ...fc, name: name.trim(), amount: amt, cat, yearly, dueDay: dd } : fc) }; }
-      else { updated = { ...prev, fixedCosts: [...prev.fixedCosts, { id: uid(), name: name.trim(), amount: amt, cat, yearly, dueDay: dd }] }; }
+      if (editItem) {
+        updated = {
+          ...prev,
+          fixedCosts: prev.fixedCosts.map((fc) =>
+            fc.id === editItem.id
+              ? { ...fc, name: name.trim(), amount: amt, cat, yearly, dueDay: dd }
+              : fc
+          ),
+        };
+      } else {
+        updated = {
+          ...prev,
+          fixedCosts: [
+            ...prev.fixedCosts,
+            { id: uid(), name: name.trim(), amount: amt, cat, yearly, dueDay: dd },
+          ],
+        };
+      }
       saveData(updated);
       return updated;
     });
+
     onClose();
   };
 
   return (
-    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="sheet" ref={swipe.sheetRef} onTouchStart={swipe.onTouchStart} onTouchMove={swipe.onTouchMove} onTouchEnd={swipe.onTouchEnd}>
-        <div className="sheet__handle"/>
-        <div className="sheet__title">{editItem ? "Fixkosten bearbeiten" : "Fixkosten hinzufügen"}</div>
-        <div className="form-group"><label className="form-label">Name</label><input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="z.B. Miete, Netflix …"/></div>
-        <div className="form-group"><label className="form-label">Betrag</label><div className="input--amount"><span className="input--amount__symbol">€</span><input className="input--amount__field" type="text" value={amount} onChange={e => setAmount(e.target.value.replace(/[^0-9.,]/g, ""))} placeholder="0" inputMode="decimal" style={{ fontSize:28 }}/></div></div>
-        <div className="form-group"><label className="form-label">Rhythmus</label><div className="seg seg--2"><button className={`seg__opt ${!yearly?"seg__opt--on":""}`} onClick={() => setYearly(false)}>Monatlich</button><button className={`seg__opt ${yearly?"seg__opt--on":""}`} onClick={() => setYearly(true)}>Jährlich</button></div></div>
-        <div className="form-group"><label className="form-label">Kategorie</label><CatPicker categories={data.categories} selected={cat} onSelect={setCat}/></div>
-        <div className="form-group"><label className="form-label">Fälligkeit (Tag)</label><input className="input" type="number" min="1" max="28" value={dueDay} onChange={e => setDueDay(e.target.value)} inputMode="numeric"/></div>
-        <div style={{ padding:"16px 24px 0" }}><button className="btn btn--primary" onClick={save}>{icons.check} Speichern</button><button className="btn btn--ghost" style={{ marginTop:8 }} onClick={onClose}>Abbrechen</button></div>
+    <div
+      className="overlay"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onTouchEnd={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="sheet"
+        ref={swipe.sheetRef}
+        onTouchStart={swipe.onTouchStart}
+        onTouchMove={swipe.onTouchMove}
+        onTouchEnd={swipe.onTouchEnd}
+      >
+        <div className="sheet__handle" />
+        <div className="sheet__title">
+          {editItem ? "Fixkosten bearbeiten" : "Fixkosten hinzufügen"}
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Name</label>
+          <input
+            className="input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="z.B. Miete, Netflix …"
+          />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Betrag</label>
+          <div className="input--amount">
+            <span className="input--amount__symbol">€</span>
+            <input
+              className="input--amount__field"
+              type="text"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value.replace(/[^0-9.,]/g, ""))}
+              placeholder="0"
+              inputMode="decimal"
+              style={{ fontSize: 28 }}
+            />
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Rhythmus</label>
+          <div className="seg seg--2">
+            <button
+              className={`seg__opt ${!yearly ? "seg__opt--on" : ""}`}
+              onClick={() => setYearly(false)}
+            >
+              Monatlich
+            </button>
+            <button
+              className={`seg__opt ${yearly ? "seg__opt--on" : ""}`}
+              onClick={() => setYearly(true)}
+            >
+              Jährlich
+            </button>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Kategorie</label>
+          <CatPicker categories={data.categories} selected={cat} onSelect={setCat} />
+        </div>
+
+        <div className="form-group">
+          <label className="form-label">Fälligkeit (Tag)</label>
+          <input
+            className="input"
+            type="number"
+            min="1"
+            max="28"
+            value={dueDay}
+            onChange={(e) => setDueDay(e.target.value)}
+            inputMode="numeric"
+          />
+        </div>
+
+        <div style={{ padding: "16px 24px 0" }}>
+          <button
+            className="btn btn--primary"
+            onClick={save}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              save();
+            }}
+          >
+            {icons.check} Speichern
+          </button>
+          <button
+            className="btn btn--ghost"
+            style={{ marginTop: 8 }}
+            onClick={onClose}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+          >
+            Abbrechen
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -819,332 +1074,111 @@ function GoalSheet({ open, onClose, data, setData }) {
   const [target, setTarget] = useState("");
   const [cat, setCat] = useState("sparen");
   const swipe = useSwipeDown(onClose);
-  const saveCats = data.categories.filter(c => SAVE_CATS.includes(c.id));
+  const saveCats = data.categories.filter((c) => SAVE_CATS.includes(c.id));
+
   if (!open) return null;
+
   const save = () => {
     const t = parseFloat(String(target).replace(",", "."));
-    if (!name.trim() || isNaN(t) || t <= 0) return;
-    setData(prev => {
-      const updated = { ...prev, goals: [...prev.goals, { id: uid(), name: name.trim(), target: t, cat }] };
+
+    if (!name.trim()) {
+      alert("Bitte einen Namen eingeben.");
+      return;
+    }
+    if (isNaN(t) || t <= 0) {
+      alert("Bitte ein gültiges Ziel eingeben.");
+      return;
+    }
+
+    setData((prev) => {
+      const updated = {
+        ...prev,
+        goals: [...prev.goals, { id: uid(), name: name.trim(), target: t, cat }],
+      };
       saveData(updated);
       return updated;
     });
-    onClose(); setName(""); setTarget("");
+
+    onClose();
+    setName("");
+    setTarget("");
   };
+
   return (
-    <div className="overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="sheet" ref={swipe.sheetRef} onTouchStart={swipe.onTouchStart} onTouchMove={swipe.onTouchMove} onTouchEnd={swipe.onTouchEnd}>
-        <div className="sheet__handle"/>
+    <div
+      className="overlay"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+      onTouchEnd={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div
+        className="sheet"
+        ref={swipe.sheetRef}
+        onTouchStart={swipe.onTouchStart}
+        onTouchMove={swipe.onTouchMove}
+        onTouchEnd={swipe.onTouchEnd}
+      >
+        <div className="sheet__handle" />
         <div className="sheet__title">Sparziel hinzufügen</div>
-        <div className="form-group"><label className="form-label">Name</label><input className="input" value={name} onChange={e => setName(e.target.value)} placeholder="z.B. Notgroschen, Urlaub …"/></div>
-        <div className="form-group"><label className="form-label">Monatliches Ziel</label><div className="input--amount"><span className="input--amount__symbol">€</span><input className="input--amount__field" type="text" value={target} onChange={e => setTarget(e.target.value.replace(/[^0-9.,]/g, ""))} placeholder="0" inputMode="decimal" style={{ fontSize:28 }}/></div></div>
-        <div className="form-group"><label className="form-label">Kategorie</label><CatPicker categories={saveCats.length ? saveCats : [data.categories.at(-1)]} selected={cat} onSelect={setCat}/></div>
-        <div style={{ padding:"16px 24px 0" }}><button className="btn btn--primary" onClick={save}>{icons.check} Speichern</button><button className="btn btn--ghost" style={{ marginTop:8 }} onClick={onClose}>Abbrechen</button></div>
-      </div>
-    </div>
-  );
-}
 
-// ═══════════════════════════════════════════════════════
-// FIX #7: PRINT REPORT
-// ═══════════════════════════════════════════════════════
-function PrintReport({ data }) {
-  const totalFC = data.fixedCosts.reduce((a, fc) => a + (fc.yearly ? fc.amount / 12 : fc.amount), 0);
-  const thisMTx = data.transactions.filter(t => isThisMonth(t.date));
-  const spent = thisMTx.filter(t => t.type === "expense").reduce((a, t) => a + t.amount, 0);
-  const saved = thisMTx.filter(t => SAVE_CATS.includes(t.cat)).reduce((a, t) => a + t.amount, 0);
-  const earned = thisMTx.filter(t => t.type === "income").reduce((a, t) => a + t.amount, 0);
-  const budget = data.income - totalFC;
+        <div className="form-group">
+          <label className="form-label">Name</label>
+          <input
+            className="input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="z.B. Notgroschen, Urlaub …"
+          />
+        </div>
 
-  return (
-    <div className="print-report">
-      <h2>BudgetSnap — Kassenbuch</h2>
-      <div className="pr-sub">{data.name ? `${data.name} · ` : ""}{monthLabel()} · Erstellt am {new Date().toLocaleDateString("de-DE")}</div>
-
-      <div className="pr-grid">
-        <div className="pr-card"><div className="pr-card-label">Einkommen</div><div className="pr-card-val" style={{ color:"#2e7d32" }}>€ {fmt(data.income)}</div></div>
-        <div className="pr-card"><div className="pr-card-label">Fixkosten</div><div className="pr-card-val" style={{ color:"#b8860b" }}>€ {fmt(totalFC)}</div></div>
-        <div className="pr-card"><div className="pr-card-label">Verfügbar</div><div className="pr-card-val" style={{ color:"#1565c0" }}>€ {fmt(budget)}</div></div>
-      </div>
-      <div className="pr-grid">
-        <div className="pr-card"><div className="pr-card-label">Ausgaben (Monat)</div><div className="pr-card-val" style={{ color:"#c62828" }}>€ {fmt(spent)}</div></div>
-        <div className="pr-card"><div className="pr-card-label">Gespart (Monat)</div><div className="pr-card-val" style={{ color:"#2e7d32" }}>€ {fmt(saved)}</div></div>
-        <div className="pr-card"><div className="pr-card-label">Restbudget</div><div className="pr-card-val" style={{ color:budget - spent >= 0 ? "#2e7d32" : "#c62828" }}>€ {fmt(budget - spent)}</div></div>
-      </div>
-
-      <h3>Fixkosten</h3>
-      <table><thead><tr><th>Posten</th><th>Rhythmus</th><th style={{ textAlign:"right" }}>Betrag</th></tr></thead><tbody>
-        {data.fixedCosts.map(fc => <tr key={fc.id}><td>{fc.name}</td><td>{fc.yearly ? "Jährlich (÷12)" : "Monatlich"}</td><td>€ {fmt(fc.yearly ? fc.amount/12 : fc.amount)}</td></tr>)}
-        <tr className="pr-total"><td colSpan={2}>Gesamt</td><td>€ {fmt(totalFC)}</td></tr>
-      </tbody></table>
-
-      <h3>Buchungen — {monthLabel()}</h3>
-      {thisMTx.length === 0 ? <p style={{ color:"#999", fontSize:12 }}>Keine Buchungen in diesem Monat.</p> : (
-        <table><thead><tr><th>Datum</th><th>Bezeichnung</th><th>Kategorie</th><th style={{ textAlign:"right" }}>Betrag</th></tr></thead><tbody>
-          {[...thisMTx].sort((a,b) => new Date(b.date)-new Date(a.date)).map(t => {
-            const c = data.categories.find(x => x.id === t.cat) || data.categories.at(-1);
-            const isExp = t.type === "expense";
-            return <tr key={t.id}><td>{dateStr(t.date)}</td><td>{t.title}</td><td>{c.name}</td><td style={{ color:isExp ? "#c62828" : "#2e7d32" }}>{isExp ? "−" : "+"}€ {fmt(t.amount)}</td></tr>;
-          })}
-        </tbody></table>
-      )}
-
-      {data.goals.length > 0 && <>
-        <h3>Sparziele</h3>
-        <table><thead><tr><th>Ziel</th><th>Ziel/Monat</th><th style={{ textAlign:"right" }}>Gespart</th></tr></thead><tbody>
-          {data.goals.map(g => {
-            const sv = thisMTx.filter(t => t.cat === g.cat).reduce((a,t) => a + t.amount, 0);
-            return <tr key={g.id}><td>{g.name}</td><td>€ {fmt(g.target)}</td><td style={{ color:sv >= g.target ? "#2e7d32" : "#333" }}>€ {fmt(sv)}</td></tr>;
-          })}
-        </tbody></table>
-      </>}
-
-      <div className="pr-footer">BudgetSnap v3.1 · Alle Daten lokal gespeichert · Erstellt mit ❤️</div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// SCREENS
-// ═══════════════════════════════════════════════════════
-function HomeScreen({ data, goTo, openAddTx, toggleTheme }) {
-  const totalFC = useMemo(() => data.fixedCosts.reduce((a, fc) => a + (fc.yearly ? fc.amount/12 : fc.amount), 0), [data.fixedCosts]);
-  const budget = data.income - totalFC;
-  const thisMonthTx = useMemo(() => data.transactions.filter(t => isThisMonth(t.date)), [data.transactions]);
-  const spent = useMemo(() => thisMonthTx.filter(t => t.type === "expense").reduce((a, t) => a + t.amount, 0), [thisMonthTx]);
-  const recent = useMemo(() => [...data.transactions].sort((a,b) => new Date(b.date)-new Date(a.date)).slice(0, 5), [data.transactions]);
-  const fcPct = Math.min((totalFC / Math.max(data.income, 1)) * 100, 100);
-
-  return (
-    <>
-      <div className="topbar"><div className="topbar__inner">
-        <div><div className="topbar__greeting">{getGreeting()}{data.name ? `, ${data.name}` : ""}</div><div className="topbar__title">Mein <em>Kassenbuch</em></div></div>
-        <div className="topbar__actions"><button className="topbar__btn" onClick={() => toggleTheme()}>{data.theme === "dark" ? icons.moon : icons.sun}</button><button className="topbar__btn" onClick={() => goTo("settings")}>{icons.settings}</button></div>
-      </div></div>
-      <div className="scroll">
-        <NotifBanner data={data}/>
-        <div className="glass hero">
-          <div className="hero__eyebrow">Verfügbares Budget</div><div className="hero__amount">€ {fmt(budget)}</div><div className="hero__sub">{monthLabel()}</div>
-          <div className="hero__stats">
-            <div className="hero__stat"><div className="hero__stat-label">Einnahmen</div><div className="hero__stat-val c-pos">€{fmt(data.income)}</div></div>
-            <div className="hero__stat"><div className="hero__stat-label">Fixkosten</div><div className="hero__stat-val c-gold">€{fmt(totalFC)}</div></div>
-            <div className="hero__stat"><div className="hero__stat-label">Ausgaben</div><div className="hero__stat-val c-neg">€{fmt(spent)}</div></div>
+        <div className="form-group">
+          <label className="form-label">Monatliches Ziel</label>
+          <div className="input--amount">
+            <span className="input--amount__symbol">€</span>
+            <input
+              className="input--amount__field"
+              type="text"
+              value={target}
+              onChange={(e) => setTarget(e.target.value.replace(/[^0-9.,]/g, ""))}
+              placeholder="0"
+              inputMode="decimal"
+              style={{ fontSize: 28 }}
+            />
           </div>
         </div>
-        <div className="glass" style={{ padding:16, marginBottom:16 }}>
-          <div className="section" style={{ marginBottom:8 }}><div className="section__title">Fixkosten</div><button className="section__link" onClick={() => goTo("fixedcosts")}>Verwalten →</button></div>
-          <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:8 }}><span style={{ color:"var(--text-3)" }}>Monatlich</span><span style={{ fontFamily:"'DM Serif Display',serif", fontSize:16, color:"var(--accent-2)" }}>€ {fmt(totalFC)}</span></div>
-          <div className="progress"><div className="progress__fill" style={{ width:`${fcPct}%`, background:"linear-gradient(90deg,var(--accent-2),var(--danger))" }}/></div>
-          <div style={{ fontSize:10, color:"var(--text-3)", marginTop:8, textAlign:"right" }}>{Math.round(fcPct)}% des Einkommens</div>
+
+        <div className="form-group">
+          <label className="form-label">Kategorie</label>
+          <CatPicker
+            categories={saveCats.length ? saveCats : [data.categories.at(-1)]}
+            selected={cat}
+            onSelect={setCat}
+          />
         </div>
-        <div className="section"><div className="section__title">Letzte Buchungen</div><button className="section__link" onClick={() => goTo("transactions")}>Alle →</button></div>
-        <div className="glass" style={{ padding:"4px 16px" }}>
-          {recent.length === 0 ? <div className="empty"><div className="empty__icon">{icons.list}</div><div className="empty__text">Noch keine Buchungen.<br/>Tippe + um loszulegen.</div></div> :
-            recent.map(t => { const c = data.categories.find(x => x.id === t.cat) || data.categories.at(-1); return (
-              <div className="tx" key={t.id}><CatIcon cat={c}/><div className="tx__info"><div className="tx__name">{t.title}</div><div className="tx__meta">{c.name}{t.note ? ` · ${t.note}` : ""}</div></div>
-              <div className="tx__right"><div className={`tx__amount ${t.type === "expense" ? "c-neg" : "c-pos"}`}>{t.type === "expense" ? "−" : "+"}€{fmt(t.amount)}</div><div className="tx__date">{dateStr(t.date)}</div></div></div>
-            ); })}
-        </div>
-      </div>
-    </>
-  );
-}
 
-function TransactionsScreen({ data, setData, openAddTx }) {
-  const [filter, setFilter] = useState("all");
-  const txs = useMemo(() => {
-    let l = [...data.transactions].sort((a,b) => new Date(b.date)-new Date(a.date));
-    if (filter === "expense") l = l.filter(t => t.type === "expense");
-    if (filter === "income") l = l.filter(t => t.type === "income");
-    if (filter === "saving") l = l.filter(t => SAVE_CATS.includes(t.cat));
-    return l;
-  }, [data.transactions, filter]);
-  const groups = useMemo(() => { const g = {}; txs.forEach(t => { const k = monthLabel(t.date); if (!g[k]) g[k] = []; g[k].push(t); }); return g; }, [txs]);
-  const del = (id) => { setData(prev => { const u = { ...prev, transactions: prev.transactions.filter(t => t.id !== id) }; saveData(u); return u; }); };
-
-  return (
-    <>
-      <div className="topbar"><div className="topbar__inner"><div><div className="topbar__greeting">Übersicht</div><div className="topbar__title"><em>Buchungen</em></div></div><div className="topbar__actions"><button className="topbar__btn" onClick={openAddTx}>{icons.plus}</button></div></div></div>
-      <div className="scroll">
-        <div className="glass" style={{ padding:4, marginBottom:16 }}><div className="seg seg--3">
-          {[["all","Alle"],["expense","Ausgaben"],["saving","Gespart"]].map(([f,l]) => <button key={f} className={`seg__opt ${filter === f ? "seg__opt--on" : ""}`} onClick={() => setFilter(f)}>{l}</button>)}
-        </div></div>
-        {txs.length === 0 ? <div className="glass" style={{ padding:0 }}><div className="empty"><div className="empty__icon">{icons.list}</div><div className="empty__text">Keine Buchungen.</div></div></div> :
-          Object.entries(groups).map(([m, list]) => (
-            <div key={m} style={{ marginBottom:16 }}>
-              <div style={{ fontFamily:"'DM Serif Display',serif", fontSize:15, fontStyle:"italic", color:"var(--text-3)", marginBottom:8, padding:"0 4px" }}>{m}</div>
-              <div className="glass" style={{ padding:"4px 16px" }}>
-                {list.map(t => { const c = data.categories.find(x => x.id === t.cat) || data.categories.at(-1); return (
-                  <div className="tx" key={t.id}><CatIcon cat={c}/><div className="tx__info"><div className="tx__name">{t.title}</div><div className="tx__meta">{c.name}{t.note ? ` · ${t.note}` : ""}</div></div>
-                  <div className="tx__right"><div className={`tx__amount ${t.type === "expense" ? "c-neg" : "c-pos"}`}>{t.type === "expense" ? "−" : "+"}€{fmt(t.amount)}</div><div className="tx__date">{dateStr(t.date)}</div></div>
-                  <div className="tx__actions"><button className="tx__action-btn" onClick={() => del(t.id)}>{icons.trash}</button></div></div>
-                ); })}
-              </div>
-            </div>
-          ))}
-      </div>
-    </>
-  );
-}
-
-function SavingsScreen({ data, setData }) {
-  const [goalOpen, setGoalOpen] = useState(false);
-  const thisMTx = useMemo(() => data.transactions.filter(t => isThisMonth(t.date)), [data.transactions]);
-  const saved = useMemo(() => thisMTx.filter(t => SAVE_CATS.includes(t.cat)).reduce((a,t) => a + t.amount, 0), [thisMTx]);
-  const target = useMemo(() => data.goals.reduce((a,g) => a + g.target, 0), [data.goals]);
-  const pct = Math.min((saved / Math.max(target, 1)) * 100, 100);
-  const months = useMemo(() => {
-    const ms = [];
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i);
-      const mt = data.transactions.filter(t => { const td = new Date(t.date); return td.getMonth() === d.getMonth() && td.getFullYear() === d.getFullYear(); });
-      ms.push({ l: d.toLocaleDateString("de-DE", { month:"short" }), v: mt.filter(t => SAVE_CATS.includes(t.cat)).reduce((a,t) => a + t.amount, 0) });
-    }
-    return ms;
-  }, [data.transactions]);
-  const mx = Math.max(...months.map(m => m.v), 1);
-  const delGoal = (id) => { setData(prev => { const u = { ...prev, goals: prev.goals.filter(g => g.id !== id) }; saveData(u); return u; }); };
-
-  return (
-    <>
-      <div className="topbar"><div className="topbar__inner"><div><div className="topbar__greeting">Meine Ziele</div><div className="topbar__title"><em>Sparplan</em></div></div><div className="topbar__actions"><button className="topbar__btn" onClick={() => setGoalOpen(true)}>{icons.plus}</button></div></div></div>
-      <div className="scroll">
-        <div className="glass hero" style={{ marginBottom:16 }}><div className="hero__eyebrow">Gespart diesen Monat</div><div className="hero__amount c-pos">€ {fmt(saved)}</div><div className="hero__sub">Ziel: € {fmt(target)} / Monat</div><div className="progress" style={{ height:6 }}><div className="progress__fill" style={{ width:`${pct}%`, background:"linear-gradient(90deg,var(--accent),var(--accent-2))" }}/></div></div>
-        {data.goals.length === 0 ? <div className="glass" style={{ padding:0 }}><div className="empty"><div className="empty__icon">{icons.trending}</div><div className="empty__text">Keine Sparziele.<br/>Tippe + um eines hinzuzufügen.</div></div></div> :
-          data.goals.map(g => { const c = data.categories.find(x => x.id === g.cat) || data.categories.at(-1); const sv = thisMTx.filter(t => t.cat === g.cat).reduce((a,t) => a + t.amount, 0); const p = Math.min((sv/Math.max(g.target,1))*100, 100); const done = p >= 100; return (
-            <div className="glass goal-card" key={g.id}><div className="goal-card__top"><CatIcon cat={c} size={36}/><div className="goal-card__info"><div className="goal-card__name">{g.name}{done ? " ✅" : ""}</div><div className="goal-card__sub">Ziel: €{fmt(g.target)}/Monat</div></div><div><div className="goal-card__amounts">€{fmt(sv)}</div><button className="tx__action-btn" style={{ float:"right", marginTop:2 }} onClick={() => delGoal(g.id)}>{icons.trash}</button></div></div>
-            <div className="progress"><div className="progress__fill" style={{ width:`${p}%`, background:done ? "var(--accent)" : c.color }}/></div><div className="goal-card__foot">{done ? "Ziel erreicht! 🎉" : `Noch €${fmt(Math.max(g.target - sv, 0))} bis zum Ziel`}</div></div>
-          ); })}
-        <div className="section" style={{ marginTop:16 }}><div className="section__title">Jahresverlauf</div></div>
-        <div className="glass" style={{ padding:16 }}><div className="year-chart">{months.map((m,i) => <div className="year-chart__bar-wrap" key={i}><div className="year-chart__bar" style={{ height:Math.max((m.v/mx)*60, m.v > 0 ? 8 : 4), background:m.v > 0 ? "linear-gradient(to top,var(--accent),var(--accent-2))" : "var(--rule)" }}/><div className="year-chart__label">{m.l}</div></div>)}</div></div>
-      </div>
-      <GoalSheet open={goalOpen} onClose={() => setGoalOpen(false)} data={data} setData={setData}/>
-    </>
-  );
-}
-
-function FixedCostsScreen({ data, setData }) {
-  const [sheetOpen, setSheetOpen] = useState(false);
-  const [editItem, setEditItem] = useState(null);
-  const total = useMemo(() => data.fixedCosts.reduce((a,fc) => a + (fc.yearly ? fc.amount/12 : fc.amount), 0), [data.fixedCosts]);
-  const pct = Math.min((total / Math.max(data.income, 1)) * 100, 100);
-  const del = (id) => { setData(prev => { const u = { ...prev, fixedCosts: prev.fixedCosts.filter(f => f.id !== id) }; saveData(u); return u; }); };
-
-  return (
-    <>
-      <div className="topbar"><div className="topbar__inner"><div><div className="topbar__greeting">Monatlich</div><div className="topbar__title"><em>Fixkosten</em></div></div><div className="topbar__actions"><button className="topbar__btn" onClick={() => { setEditItem(null); setSheetOpen(true); }}>{icons.plus}</button></div></div></div>
-      <div className="scroll">
-        <div className="glass" style={{ padding:16, marginBottom:16 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-            <div><div style={{ fontSize:11, color:"var(--text-3)", textTransform:"uppercase", letterSpacing:1, marginBottom:4 }}>Gesamt / Monat</div><div style={{ fontFamily:"'DM Serif Display',serif", fontSize:36, color:"var(--accent-2)" }}>€ {fmt(total)}</div></div>
-            <div style={{ textAlign:"right" }}><div style={{ fontSize:11, color:"var(--text-3)" }}>vom Einkommen</div><div style={{ fontFamily:"'DM Serif Display',serif", fontSize:22, color:"var(--danger)" }}>{Math.round(pct)}%</div></div>
-          </div>
-          <div className="progress" style={{ marginTop:8 }}><div className="progress__fill" style={{ width:`${pct}%`, background:"linear-gradient(90deg,var(--accent-2),var(--danger))" }}/></div>
-        </div>
-        <div className="glass" style={{ padding:"4px 0" }}>
-          {data.fixedCosts.length === 0 ? <div className="empty"><div className="empty__icon">{icons.repeat}</div><div className="empty__text">Noch keine Fixkosten.</div></div> :
-            data.fixedCosts.map(fc => { const c = data.categories.find(x => x.id === fc.cat) || data.categories.at(-1); const amt = fc.yearly ? fc.amount/12 : fc.amount; return (
-              <div className="fc" key={fc.id}><CatIcon cat={c} size={36}/><div className="fc__info"><div className="fc__name">{fc.name}</div><div className="fc__due">Am {fc.dueDay}. · {fc.yearly ? "Jährlich (÷12)" : "Monatlich"}</div></div>
-              <div className="fc__amount">€{fmt(amt)}</div><div className="tx__actions"><button className="tx__action-btn" onClick={() => { setEditItem(fc); setSheetOpen(true); }}>{icons.edit}</button><button className="tx__action-btn" onClick={() => del(fc.id)}>{icons.trash}</button></div></div>
-            ); })}
+        <div style={{ padding: "16px 24px 0" }}>
+          <button
+            className="btn btn--primary"
+            onClick={save}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              save();
+            }}
+          >
+            {icons.check} Speichern
+          </button>
+          <button
+            className="btn btn--ghost"
+            style={{ marginTop: 8 }}
+            onClick={onClose}
+            onTouchEnd={(e) => {
+              e.stopPropagation();
+              onClose();
+            }}
+          >
+            Abbrechen
+          </button>
         </div>
       </div>
-      <FCSheet open={sheetOpen} onClose={() => { setSheetOpen(false); setEditItem(null); }} editItem={editItem} data={data} setData={setData}/>
-    </>
-  );
-}
-
-function SettingsScreen({ data, setData, toggleTheme }) {
-  const addCat = (name) => {
-    const id = name.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"") + "-" + uid().slice(-3);
-    const colors = ["#E57373","#FFA726","#9575CD","#5C6BC0","#42A5F5","#26C6DA","#66BB6A","#FFCA28"];
-    setData(prev => {
-      const u = { ...prev, categories: [...prev.categories, { id, name, icon:"star", color:colors[prev.categories.length % colors.length] }] };
-      saveData(u); return u;
-    });
-  };
-  const remCat = (id) => { setData(prev => { const u = { ...prev, categories: prev.categories.filter(c => c.id !== id) }; saveData(u); return u; }); };
-  const handleExport = () => { const b = new Blob([JSON.stringify(data, null, 2)], { type:"application/json" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `budgetsnap-${getToday()}.json`; a.click(); URL.revokeObjectURL(u); };
-  const handlePrint = () => window.print();
-  const handleDelete = () => { if (confirm("Wirklich ALLE Daten unwiderruflich löschen?")) { try { localStorage.removeItem(STORAGE_KEY); } catch(e){} window.location.reload(); } };
-
-  return (
-    <>
-      <div className="topbar"><div className="topbar__inner"><div><div className="topbar__greeting">BudgetSnap</div><div className="topbar__title"><em>Einstellungen</em></div></div></div></div>
-      <div className="scroll">
-        <div className="settings-section"><div className="settings-label">Einkommen</div><div className="glass" style={{ padding:16 }}><label className="form-label">Monatliches Nettoeinkommen</label><div className="input--amount"><span className="input--amount__symbol">€</span><input className="input--amount__field" type="number" value={data.income} onChange={e => { const v = parseFloat(e.target.value) || 0; setData(prev => { const u = { ...prev, income: v }; saveData(u); return u; }); }} inputMode="decimal" style={{ fontSize:24 }}/></div></div></div>
-        <div className="settings-section"><div className="settings-label">Kategorien</div><div className="glass" style={{ padding:16 }}><TagInput categories={data.categories} onAdd={addCat} onRemove={remCat}/><div style={{ fontSize:11, color:"var(--text-3)", marginTop:8, fontStyle:"italic" }}>Enter = Hinzufügen · Backspace = Entfernen</div></div></div>
-        <div className="settings-section"><div className="settings-label">Darstellung</div><div className="glass" style={{ padding:16 }}><div className="seg seg--2"><button className={`seg__opt ${data.theme === "light" ? "seg__opt--on" : ""}`} onClick={() => toggleTheme("light")}>☀️ Hell</button><button className={`seg__opt ${data.theme === "dark" ? "seg__opt--on" : ""}`} onClick={() => toggleTheme("dark")}>🌙 Dunkel</button></div></div></div>
-        <div className="settings-section"><div className="settings-label">Benachrichtigungen</div><div className="glass" style={{ padding:16 }}><div style={{ display:"flex", alignItems:"center", gap:16 }}><div style={{ flex:1 }}><div style={{ fontWeight:600 }}>Budget-Erinnerung</div><div style={{ fontSize:11, color:"var(--text-3)", marginTop:2 }}>Warnung ab {data.budgetThreshold}%</div></div><button className={`toggle ${data.pushEnabled ? "toggle--on" : ""}`} onClick={() => { setData(prev => { const u = { ...prev, pushEnabled:!prev.pushEnabled }; saveData(u); return u; }); }} role="switch" aria-checked={data.pushEnabled}/></div></div></div>
-        <div className="settings-section"><div className="settings-label">Datenschutz</div><div className="glass" style={{ padding:16 }}>{["Alle Daten lokal auf deinem Gerät","Keine Server, keine Cloud","Kein Account, kein Tracking","DSGVO-konform"].map(t => <div key={t} style={{ fontSize:12, color:"var(--text-2)", padding:"4px 0", display:"flex", alignItems:"center", gap:8 }}><span style={{ color:"var(--accent)" }}>{icons.check}</span> {t}</div>)}</div></div>
-        <div className="settings-section"><div className="settings-label">Daten</div><div className="glass" style={{ overflow:"hidden" }}>
-          <button className="set-row" onClick={handleExport}><div className="set-row__icon">{icons.download}</div><div className="set-row__info"><div className="set-row__title">JSON Export</div><div className="set-row__sub">Daten als JSON sichern</div></div><div style={{ color:"var(--text-3)" }}>{icons.chevron}</div></button>
-          <div style={{ height:1, background:"var(--rule)", margin:"0 16px" }}/>
-          <button className="set-row" onClick={handlePrint}><div className="set-row__icon">{icons.download}</div><div className="set-row__info"><div className="set-row__title">PDF / Drucken</div><div className="set-row__sub">Kassenbuch-Bericht</div></div><div style={{ color:"var(--text-3)" }}>{icons.chevron}</div></button>
-          <div style={{ height:1, background:"var(--rule)", margin:"0 16px" }}/>
-          <button className="set-row" onClick={handleDelete} style={{ color:"var(--danger)" }}><div className="set-row__icon" style={{ color:"var(--danger)" }}>{icons.trash}</div><div className="set-row__info"><div className="set-row__title" style={{ color:"var(--danger)" }}>Alle Daten löschen</div><div className="set-row__sub">Recht auf Vergessenwerden</div></div><div style={{ color:"var(--danger)" }}>{icons.chevron}</div></button>
-        </div></div>
-        <div className="glass" style={{ padding:24, textAlign:"center", marginBottom:24 }}><div style={{ fontFamily:"'DM Serif Display',serif", fontSize:24, fontStyle:"italic", marginBottom:4 }}>BudgetSnap</div><div style={{ fontSize:11, color:"var(--text-3)" }}>Version 3.2</div></div>
-      </div>
-    </>
-  );
-}
-
-// ═══════════════════════════════════════════════════════
-// MAIN APP
-// ═══════════════════════════════════════════════════════
-export default function BudgetSnap() {
-  const [data, setData] = useState(loadData);
-  const [tab, setTab] = useState("home");
-  const [addTxOpen, setAddTxOpen] = useState(false);
-
-  useEffect(() => { document.documentElement.setAttribute("data-theme", data.theme); }, [data.theme]);
-  const toggleTheme = useCallback((explicit) => {
-    setData(prev => {
-      const next = explicit || (prev.theme === "dark" ? "light" : "dark");
-      const u = { ...prev, theme: next };
-      saveData(u);
-      return u;
-    });
-  }, []);
-  const goTo = useCallback((t) => setTab(t), []);
-
-  if (!data.wizardDone) {
-    return (<><style>{styles}</style><div className="app-root"><Wizard onComplete={(wd) => {
-      setData(prev => {
-        const u = { ...prev, ...wd, wizardDone: true,
-          fixedCosts: wd.fixedCosts?.length ? wd.fixedCosts : [],
-          goals: prev.goals.length ? prev.goals : [{ id: uid(), name: "Notgroschen", target: 300, cat: "sparen" }, { id: uid(), name: "ETF / Altersvorsorge", target: 150, cat: "etf" }],
-        };
-        saveData(u);
-        return u;
-      });
-    }}/></div></>);
-  }
-
-  const navItems = [
-    { id:"home", label:"Home", icon:icons.home },
-    { id:"transactions", label:"Buchungen", icon:icons.list },
-    { id:"savings", label:"Sparen", icon:icons.chart },
-    { id:"fixedcosts", label:"Fixkosten", icon:icons.repeat },
-    { id:"settings", label:"Einst.", icon:icons.settings },
-  ];
-
-  return (
-    <><style>{styles}</style>
-      <div className="app-root">
-        <div style={{ display:"flex", flexDirection:"column", height:"100dvh" }}>
-          {tab === "home" && <HomeScreen data={data} goTo={goTo} openAddTx={() => setAddTxOpen(true)} toggleTheme={toggleTheme}/>}
-          {tab === "transactions" && <TransactionsScreen data={data} setData={setData} openAddTx={() => setAddTxOpen(true)}/>}
-          {tab === "savings" && <SavingsScreen data={data} setData={setData}/>}
-          {tab === "fixedcosts" && <FixedCostsScreen data={data} setData={setData}/>}
-          {tab === "settings" && <SettingsScreen data={data} setData={setData} toggleTheme={toggleTheme}/>}
-        </div>
-        <nav className="nav">{navItems.map(n => <button key={n.id} className={`nav__item ${tab === n.id ? "nav__item--active" : ""}`} onClick={() => setTab(n.id)}><div className="nav__icon">{n.icon}</div><div className="nav__label">{n.label}</div></button>)}</nav>
-        {tab !== "settings" && <button className="fab" onClick={() => setAddTxOpen(true)} aria-label="Buchung hinzufügen">{icons.plus}</button>}
-        <AddTxSheet open={addTxOpen} onClose={() => setAddTxOpen(false)} data={data} setData={setData}/>
-        <PrintReport data={data}/>
-      </div>
-    </>
+    </div>
   );
 }
