@@ -185,8 +185,12 @@ const getGreeting = () => {
 };
 
 const SAVE_CATS = ["sparen", "etf", "puffer", "sonstiges"];
+const REMINDER_MODES = ["off", "daily", "weekly", "month_end"];
 
 const isSavingTx = (tx) => tx?.type === "saving" || (tx?.type === "expense" && SAVE_CATS.includes(tx?.cat));
+
+const getMonthKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+const getMonthStart = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 
 const getBudgetSnapshot = (data, baseDate = new Date()) => {
   const txs = Array.isArray(data.transactions) ? data.transactions : [];
@@ -219,8 +223,10 @@ const getDefaultData = () => ({
   fixedCosts: [],
   goals: [],
   pushEnabled: false,
+  reminderMode: "off",
   budgetThreshold: 80,
   wizardDone: false,
+  lastCarryoverAppliedMonth: "",
 });
 
 const normalizeData = (raw) => {
@@ -238,8 +244,10 @@ const normalizeData = (raw) => {
     fixedCosts: Array.isArray(merged.fixedCosts) ? merged.fixedCosts : [],
     goals: Array.isArray(merged.goals) ? merged.goals : [],
     pushEnabled: Boolean(merged.pushEnabled),
+    reminderMode: REMINDER_MODES.includes(merged.reminderMode) ? merged.reminderMode : "off",
     budgetThreshold: Number.isFinite(threshold) ? threshold : base.budgetThreshold,
     wizardDone: Boolean(merged.wizardDone),
+    lastCarryoverAppliedMonth: typeof merged.lastCarryoverAppliedMonth === "string" ? merged.lastCarryoverAppliedMonth : "",
   };
 };
 
@@ -256,6 +264,60 @@ const saveData = (data) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   } catch (e) {
     /* localStorage unavailable or blocked */
+  }
+};
+
+const getNextReminderDelayMs = (mode, now = new Date()) => {
+  const next = new Date(now);
+  if (mode === "daily") {
+    next.setHours(7, 0, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    return next - now;
+  }
+  if (mode === "weekly") {
+    next.setHours(7, 0, 0, 0);
+    const day = next.getDay(); // 0 = Sunday, 1 = Monday
+    const daysUntilMonday = (1 - day + 7) % 7 || 7;
+    if (day !== 1 || next <= now) next.setDate(next.getDate() + daysUntilMonday);
+    return next - now;
+  }
+  if (mode === "month_end") {
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    const end = new Date(y, m + 1, 0, 19, 0, 0, 0);
+    if (end <= now) {
+      return new Date(y, m + 2, 0, 19, 0, 0, 0) - now;
+    }
+    return end - now;
+  }
+  return 0;
+};
+
+const showBudgetNotification = (data, mode) => {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const snap = getBudgetSnapshot(data);
+  const available = Math.max(snap.available, 0);
+  const positive = [
+    "Du machst das stark.",
+    "Schritt für Schritt bist du auf Kurs.",
+    "Dein Plan zahlt sich aus.",
+    "Weiter so, du bist diszipliniert unterwegs.",
+  ];
+  const pick = positive[new Date().getDate() % positive.length];
+
+  let title = "BudgetSnap Erinnerung";
+  let body = `${pick} Aktuell verfügbar: €${fmt(available)}.`;
+  if (mode === "month_end") {
+    title = "Monatsabschluss";
+    body = `Du hast noch €${fmt(available)} Budget zur Verfügung. ${pick}`;
+  } else if (mode === "daily") {
+    title = "Guten Morgen";
+  }
+
+  try {
+    new Notification(title, { body, icon: "/pwa-192.png" });
+  } catch (e) {
+    /* notification blocked */
   }
 };
 
@@ -861,13 +923,81 @@ const styles = `
 
   .toggle--on::after { transform: translateX(20px); }
 
+  .print-report { display: none; }
+
   /* ── PRINT STYLES ── */
   @media print {
-    .nav, .fab, .topbar__actions { display: none !important; }
+    .nav, .fab, .topbar, .overlay, .section__link { display: none !important; }
     .scroll { padding-bottom: 0 !important; }
     .app-root { max-width: none; }
     .glass, .glass:hover { background: white; backdrop-filter: none; box-shadow: none; border: 1px solid #ddd; }
     body { background: white !important; }
+
+    .print-report {
+      display: block;
+      padding: 24px;
+      color: #111;
+      font-family: 'Outfit', sans-serif;
+      background: #fff;
+    }
+    .print-report h1 {
+      font-family: 'DM Serif Display', serif;
+      font-size: 30px;
+      font-weight: 400;
+      margin-bottom: 4px;
+    }
+    .print-report__sub {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 18px;
+    }
+    .print-report__grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .print-report__card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .print-report__card-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #777;
+      margin-bottom: 4px;
+    }
+    .print-report__card-val {
+      font-family: 'DM Serif Display', serif;
+      font-size: 18px;
+    }
+    .print-report h2 {
+      font-family: 'DM Serif Display', serif;
+      font-size: 18px;
+      font-weight: 400;
+      margin: 18px 0 8px;
+    }
+    .print-report table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .print-report th, .print-report td {
+      border-bottom: 1px solid #e5e5e5;
+      padding: 6px 4px;
+      text-align: left;
+    }
+    .print-report th {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #777;
+      letter-spacing: 0.4px;
+    }
+    .print-report td:last-child, .print-report th:last-child {
+      text-align: right;
+    }
   }
 
   /* ── ANIMATIONS ── */
@@ -1036,6 +1166,7 @@ function Wizard({ onComplete }) {
         name: name.trim(),
         income: parseFloat(income),
         pushEnabled,
+        reminderMode: pushEnabled ? "daily" : "off",
         theme,
         fixedCosts: finalFC,
       });
@@ -2188,10 +2319,43 @@ function SettingsScreen({ data, setData, toggleTheme }) {
               </div>
               <button className={`toggle ${data.pushEnabled ? "toggle--on" : ""}`}
                 onClick={() => {
-                  const u = { ...data, pushEnabled: !data.pushEnabled };
+                  const nextEnabled = !data.pushEnabled;
+                  if (nextEnabled && "Notification" in window && Notification.permission === "default") {
+                    Notification.requestPermission();
+                  }
+                  const u = { ...data, pushEnabled: nextEnabled, reminderMode: nextEnabled && data.reminderMode === "off" ? "daily" : data.reminderMode };
                   setData(u); saveData(u);
                 }}
                 role="switch" aria-checked={data.pushEnabled} aria-label="Push-Benachrichtigungen" />
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <div className="form-label" style={{ marginBottom: 6 }}>Intervall</div>
+              <div className="seg seg--2">
+                {[
+                  ["off", "Aus"],
+                  ["daily", "Täglich 07:00"],
+                  ["weekly", "Wöchentlich"],
+                  ["month_end", "Monatsende"],
+                ].map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    className={`seg__opt ${data.reminderMode === mode ? "seg__opt--on" : ""}`}
+                    onClick={() => {
+                      if (mode !== "off" && "Notification" in window && Notification.permission === "default") {
+                        Notification.requestPermission();
+                      }
+                      const u = { ...data, reminderMode: mode, pushEnabled: mode === "off" ? false : true };
+                      setData(u);
+                      saveData(u);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 8 }}>
+                Daily Reminder sendet morgens um 07:00 eine positive Budget-Nachricht.
+              </div>
             </div>
           </div>
         </div>
@@ -2251,6 +2415,118 @@ function SettingsScreen({ data, setData, toggleTheme }) {
   );
 }
 
+function PrintReport({ data }) {
+  const snap = useMemo(() => getBudgetSnapshot(data), [data]);
+  const txs = useMemo(
+    () => [...(Array.isArray(data.transactions) ? data.transactions : [])].sort((a, b) => new Date(b.date) - new Date(a.date)),
+    [data.transactions]
+  );
+  const fixedCosts = Array.isArray(data.fixedCosts) ? data.fixedCosts : [];
+  const goals = Array.isArray(data.goals) ? data.goals : [];
+
+  return (
+    <section className="print-report" aria-hidden="true">
+      <h1>BudgetSnap Bericht</h1>
+      <div className="print-report__sub">Erstellt am {new Date().toLocaleDateString("de-DE")} · Monat {monthLabel()}</div>
+
+      <div className="print-report__grid">
+        <div className="print-report__card">
+          <div className="print-report__card-label">Verfügbar</div>
+          <div className="print-report__card-val">€ {fmt(snap.available)}</div>
+        </div>
+        <div className="print-report__card">
+          <div className="print-report__card-label">Einnahmen</div>
+          <div className="print-report__card-val">€ {fmt(snap.incomeBase + snap.incomeTx)}</div>
+        </div>
+        <div className="print-report__card">
+          <div className="print-report__card-label">Fixkosten</div>
+          <div className="print-report__card-val">€ {fmt(snap.totalFC)}</div>
+        </div>
+        <div className="print-report__card">
+          <div className="print-report__card-label">Ausgaben + Sparen</div>
+          <div className="print-report__card-val">€ {fmt(snap.expenseTx + snap.savingTx)}</div>
+        </div>
+      </div>
+
+      <h2>Buchungen</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Datum</th>
+            <th>Titel</th>
+            <th>Kategorie</th>
+            <th>Typ</th>
+            <th>Betrag</th>
+          </tr>
+        </thead>
+        <tbody>
+          {txs.map((t) => {
+            const cat = data.categories.find((c) => c.id === t.cat) || data.categories.at(-1) || { name: "-" };
+            const isOut = isSavingTx(t) || t.type === "expense";
+            return (
+              <tr key={t.id}>
+                <td>{new Date(t.date).toLocaleDateString("de-DE")}</td>
+                <td>{t.title}</td>
+                <td>{cat.name}</td>
+                <td>{isSavingTx(t) ? "Sparen" : t.type === "income" ? "Einnahme" : "Ausgabe"}</td>
+                <td>{isOut ? "−" : "+"}€ {fmt(t.amount)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <h2>Fixkosten</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Kategorie</th>
+            <th>Rhythmus</th>
+            <th>Betrag</th>
+          </tr>
+        </thead>
+        <tbody>
+          {fixedCosts.map((fc) => {
+            const cat = data.categories.find((c) => c.id === fc.cat) || data.categories.at(-1) || { name: "-" };
+            return (
+              <tr key={fc.id}>
+                <td>{fc.name}</td>
+                <td>{cat.name}</td>
+                <td>{fc.yearly ? "Jährlich" : "Monatlich"}</td>
+                <td>€ {fmt(fc.yearly ? fc.amount / 12 : fc.amount)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      <h2>Sparziele</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Ziel</th>
+            <th>Kategorie</th>
+            <th>Monatsziel</th>
+          </tr>
+        </thead>
+        <tbody>
+          {goals.map((g) => {
+            const cat = data.categories.find((c) => c.id === g.cat) || data.categories.at(-1) || { name: "-" };
+            return (
+              <tr key={g.id}>
+                <td>{g.name}</td>
+                <td>{cat.name}</td>
+                <td>€ {fmt(g.target)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
 // ═══════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════
@@ -2271,6 +2547,74 @@ export default function BudgetSnap() {
   }, [data]);
 
   const goTo = useCallback((t) => setTab(t), []);
+
+  useEffect(() => {
+    const currentMonth = getMonthKey(new Date());
+    if (data.lastCarryoverAppliedMonth === currentMonth) return;
+
+    setData((prev) => {
+      if (prev.lastCarryoverAppliedMonth === currentMonth) return prev;
+      const now = new Date();
+      const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const prevSnap = getBudgetSnapshot(prev, prevMonthDate);
+      const carry = Math.max(prevSnap.available, 0);
+      const marker = getMonthKey(now);
+      const existing = Array.isArray(prev.transactions) ? prev.transactions : [];
+
+      let nextTx = existing;
+      if (carry > 0) {
+        const prevMonthName = prevMonthDate.toLocaleDateString("de-DE", { month: "long" });
+        const title = `Monat ${prevMonthName} übriges Budget`;
+        const date = getMonthStart(now);
+        const already = existing.some((t) => t.title === title && t.date === date && t.note === "Automatischer Monatsübertrag");
+        if (!already) {
+          nextTx = [
+            ...existing,
+            {
+              id: uid(),
+              type: "income",
+              amount: Number(carry.toFixed(2)),
+              title,
+              date,
+              cat: "sonstiges",
+              note: "Automatischer Monatsübertrag",
+            },
+          ];
+        }
+      }
+
+      const updated = { ...prev, transactions: nextTx, lastCarryoverAppliedMonth: marker };
+      saveData(updated);
+      return updated;
+    });
+  }, [data.lastCarryoverAppliedMonth]);
+
+  useEffect(() => {
+    if (!data.pushEnabled || data.reminderMode === "off") return undefined;
+    if (!("Notification" in window)) return undefined;
+
+    let cancelled = false;
+    let timerId = null;
+
+    const run = () => {
+      if (cancelled) return;
+      showBudgetNotification(data, data.reminderMode);
+      const delay = getNextReminderDelayMs(data.reminderMode);
+      if (delay > 0) {
+        timerId = window.setTimeout(run, delay);
+      }
+    };
+
+    const firstDelay = getNextReminderDelayMs(data.reminderMode);
+    if (firstDelay > 0) {
+      timerId = window.setTimeout(run, firstDelay);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timerId) window.clearTimeout(timerId);
+    };
+  }, [data.pushEnabled, data.reminderMode, data.transactions, data.fixedCosts, data.income, data.name]);
 
   if (!data.wizardDone) {
     return (
@@ -2336,6 +2680,8 @@ export default function BudgetSnap() {
 
         {/* Add Transaction Sheet */}
         <AddTxSheet open={addTxOpen} onClose={() => setAddTxOpen(false)} data={data} setData={setData} />
+
+        <PrintReport data={data} />
 
         <span className="sr-only" role="status" aria-live="polite">BudgetSnap Finanz-Tracker geladen</span>
       </div>
