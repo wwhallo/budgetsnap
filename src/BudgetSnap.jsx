@@ -184,6 +184,29 @@ const getGreeting = () => {
   return h < 12 ? "Guten Morgen" : h < 17 ? "Guten Tag" : "Guten Abend";
 };
 
+const SAVE_CATS = ["sparen", "etf", "puffer", "sonstiges"];
+
+const isSavingTx = (tx) => tx?.type === "saving" || (tx?.type === "expense" && SAVE_CATS.includes(tx?.cat));
+
+const getBudgetSnapshot = (data, baseDate = new Date()) => {
+  const txs = Array.isArray(data.transactions) ? data.transactions : [];
+  const fixedCosts = Array.isArray(data.fixedCosts) ? data.fixedCosts : [];
+  const monthlyTx = txs.filter((t) => {
+    const d = new Date(t.date);
+    return d.getMonth() === baseDate.getMonth() && d.getFullYear() === baseDate.getFullYear();
+  });
+
+  const incomeTx = monthlyTx.filter((t) => t.type === "income").reduce((a, t) => a + t.amount, 0);
+  const savingTx = monthlyTx.filter((t) => isSavingTx(t)).reduce((a, t) => a + t.amount, 0);
+  const expenseTx = monthlyTx.filter((t) => t.type === "expense" && !isSavingTx(t)).reduce((a, t) => a + t.amount, 0);
+  const totalFC = fixedCosts.reduce((a, fc) => a + (fc.yearly ? fc.amount / 12 : fc.amount), 0);
+  const incomeBase = Number(data.income) || 0;
+  const grossBudget = incomeBase + incomeTx - totalFC;
+  const available = grossBudget - expenseTx - savingTx;
+
+  return { incomeBase, incomeTx, expenseTx, savingTx, totalFC, grossBudget, available, monthlyTx };
+};
+
 // ═══════════════════════════════════════════════════════
 // DATA PERSISTENCE
 // ═══════════════════════════════════════════════════════
@@ -948,14 +971,10 @@ function Wizard({ onComplete }) {
   const [theme, setTheme] = useState("light");
   const totalSteps = 5;
 
-  // Fixkosten state: pre-filled with common items
+  // Start with empty amounts; user should define their own fixed-cost profile.
   const [wizFC, setWizFC] = useState([
-    { id: "wfc_1", name: "Miete", amount: "850", cat: "miete", icon: "home", color: "#E57373", yearly: false },
-    { id: "wfc_2", name: "Strom / Gas", amount: "120", cat: "sonstiges", icon: "star", color: "#FFA726", yearly: false },
-    { id: "wfc_3", name: "Internet", amount: "35", cat: "abos", icon: "play", color: "#5C6BC0", yearly: false },
-    { id: "wfc_4", name: "Handy", amount: "30", cat: "sonstiges", icon: "star", color: "#26C6DA", yearly: false },
-    { id: "wfc_5", name: "Streaming / Abos", amount: "40", cat: "abos", icon: "play", color: "#9575CD", yearly: false },
-    { id: "wfc_6", name: "Versicherungen", amount: "80", cat: "versicherung", icon: "shield", color: "#42A5F5", yearly: false },
+    { id: "wfc_1", name: "Miete", amount: "", cat: "miete", icon: "home", color: "#E57373", yearly: false },
+    { id: "wfc_2", name: "Versicherung", amount: "", cat: "versicherung", icon: "shield", color: "#42A5F5", yearly: false },
   ]);
 
   const [showAddFC, setShowAddFC] = useState(false);
@@ -993,11 +1012,14 @@ function Wizard({ onComplete }) {
 
   const fcTotal = wizFC.reduce((sum, fc) => sum + (parseFloat(fc.amount) || 0), 0);
   const filledFC = wizFC.filter((fc) => parseFloat(fc.amount) > 0);
+  const distinctFilledFC = new Set(
+    filledFC.map((fc) => fc.name.trim().toLowerCase()).filter(Boolean)
+  ).size;
 
   const next = () => {
     if (step === 1 && !name.trim()) return;
     if (step === 2 && (!income || parseFloat(income) <= 0)) return;
-    if (step === 3 && filledFC.length < 2) return; // mindestens 2 Angaben
+    if (step === 3 && distinctFilledFC < 2) return; // mindestens 2 verschiedene Angaben
     if (step < totalSteps - 1) setStep(step + 1);
     else {
       const finalFC = wizFC
@@ -1094,7 +1116,7 @@ function Wizard({ onComplete }) {
         <div className="wizard__step" key="s3">
           <div style={{ fontSize: 48, marginBottom: 16 }}>🏠</div>
           <div className="wizard__title">Deine monatlichen<br /><em>Fixkosten</em></div>
-          <div className="wizard__sub">Passe die Beträge an oder entferne was nicht passt.<br />Mindestens 2 Angaben, damit du eine Orientierung hast.</div>
+          <div className="wizard__sub">Lege deine Fixkosten selbst an.<br />Mindestens 2 verschiedene Angaben (z.B. Miete und Versicherung).</div>
 
           <div className="wizard__card glass" style={{ padding: 16, maxHeight: "48dvh", overflowY: "auto" }}>
             <div className="wiz-fc-list" role="list" aria-label="Fixkosten">
@@ -1193,15 +1215,15 @@ function Wizard({ onComplete }) {
             )}
           </div>
 
-          {filledFC.length < 2 && (
+          {distinctFilledFC < 2 && (
             <div style={{ fontSize: 12, color: "var(--danger)", marginBottom: 8, fontStyle: "italic" }}>
-              Bitte gib mindestens 2 Fixkosten mit Betrag an.
+              Bitte gib mindestens 2 verschiedene Fixkosten mit Betrag an.
             </div>
           )}
 
           <div style={{ display: "flex", gap: 8, width: "100%" }}>
             <button className="btn btn--ghost btn--small" onClick={back} aria-label="Zurück">←</button>
-            <button className="btn btn--primary" onClick={next} style={{ opacity: filledFC.length < 2 ? 0.5 : 1 }}>
+            <button className="btn btn--primary" onClick={next} style={{ opacity: distinctFilledFC < 2 ? 0.5 : 1 }}>
               Weiter →
             </button>
           </div>
@@ -1328,15 +1350,12 @@ function TagInput({ categories, onAdd, onRemove }) {
 
 /* ── Notification Banner ── */
 function NotifBanner({ data }) {
-  const totalFC = data.fixedCosts.reduce((a, fc) => a + (fc.yearly ? fc.amount / 12 : fc.amount), 0);
-  const budget = data.income - totalFC;
-  const spent = data.transactions
-    .filter((t) => isThisMonth(t.date) && t.type === "expense")
-    .reduce((a, t) => a + t.amount, 0);
-  const pct = budget > 0 ? (spent / budget) * 100 : 0;
+  const snap = getBudgetSnapshot(data);
+  const spent = snap.expenseTx + snap.savingTx;
+  const pct = snap.grossBudget > 0 ? (spent / snap.grossBudget) * 100 : 0;
   const quote = motivationalQuotes[new Date().getDate() % motivationalQuotes.length];
 
-  if (pct < data.budgetThreshold) return null;
+  if (!data.pushEnabled || pct < data.budgetThreshold) return null;
 
   return (
     <div className="notif" role="alert">
@@ -1586,17 +1605,106 @@ function GoalSheet({ open, onClose, data, setData }) {
   );
 }
 
+function SavingsDepositSheet({ open, onClose, goal, availableBudget, data, setData }) {
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(getToday());
+  const [note, setNote] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setAmount("");
+    setDate(getToday());
+    setNote("");
+  }, [open, goal]);
+
+  if (!open || !goal) return null;
+
+  const save = () => {
+    const amt = parseFloat(String(amount).replace(",", "."));
+    if (!Number.isFinite(amt) || amt <= 0) return;
+    if (amt > availableBudget) {
+      alert("Der Betrag überschreitet dein verfügbares Budget.");
+      return;
+    }
+
+    const tx = {
+      id: uid(),
+      type: "saving",
+      amount: amt,
+      title: `Sparplan: ${goal.name}`,
+      date,
+      cat: goal.cat,
+      note: note.trim(),
+    };
+
+    setData((prev) => {
+      const prevTx = Array.isArray(prev.transactions) ? prev.transactions : [];
+      const updated = { ...prev, transactions: [...prevTx, tx] };
+      saveData(updated);
+      return updated;
+    });
+    onClose();
+  };
+
+  return (
+    <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-label="In Sparplan einzahlen" aria-modal="true">
+      <div className="sheet">
+        <div className="sheet__handle" />
+        <div className="sheet__title">In Sparplan einzahlen</div>
+        <div className="form-group">
+          <label className="form-label">Ziel</label>
+          <input className="input" value={goal.name} readOnly />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Verfügbar</label>
+          <input className="input" value={`€ ${fmt(Math.max(availableBudget, 0))}`} readOnly />
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="dep-amount">Betrag</label>
+          <div className="input--amount">
+            <span className="input--amount__symbol">€</span>
+            <input
+              id="dep-amount"
+              className="input--amount__field"
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0"
+              inputMode="decimal"
+              step="0.01"
+              style={{ fontSize: 28 }}
+              autoFocus
+            />
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="dep-date">Datum</label>
+          <input id="dep-date" className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </div>
+        <div className="form-group">
+          <label className="form-label" htmlFor="dep-note">Notiz (optional)</label>
+          <input id="dep-note" className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="z.B. Restbudget" />
+        </div>
+        <div style={{ padding: "16px 24px 0" }}>
+          <button className="btn btn--primary" onClick={save}>{icons.check} Einzahlen</button>
+          <button className="btn btn--ghost" style={{ marginTop: 8 }} onClick={onClose}>Abbrechen</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════
 // SCREENS
 // ═══════════════════════════════════════════════════════
 
 function HomeScreen({ data, setData, goTo, openAddTx, toggleTheme }) {
-  const totalFC = useMemo(() => data.fixedCosts.reduce((a, fc) => a + (fc.yearly ? fc.amount / 12 : fc.amount), 0), [data.fixedCosts]);
-  const budget = data.income - totalFC;
-  const thisMonthTx = useMemo(() => data.transactions.filter((t) => isThisMonth(t.date)), [data.transactions]);
-  const spent = useMemo(() => thisMonthTx.filter((t) => t.type === "expense").reduce((a, t) => a + t.amount, 0), [thisMonthTx]);
+  const snap = useMemo(() => getBudgetSnapshot(data), [data]);
+  const totalFC = snap.totalFC;
+  const budget = snap.available;
+  const spent = snap.expenseTx + snap.savingTx;
   const recent = useMemo(() => [...data.transactions].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5), [data.transactions]);
-  const fcPct = Math.min((totalFC / Math.max(data.income, 1)) * 100, 100);
+  const fcPct = Math.min((totalFC / Math.max(snap.incomeBase + snap.incomeTx, 1)) * 100, 100);
 
   return (
     <>
@@ -1628,7 +1736,7 @@ function HomeScreen({ data, setData, goTo, openAddTx, toggleTheme }) {
           <div className="hero__stats">
             <div className="hero__stat">
               <div className="hero__stat-label">Einnahmen</div>
-              <div className="hero__stat-val c-pos">€{fmt(data.income)}</div>
+              <div className="hero__stat-val c-pos">€{fmt(snap.incomeBase + snap.incomeTx)}</div>
             </div>
             <div className="hero__stat">
               <div className="hero__stat-label">Fixkosten</div>
@@ -1679,8 +1787,8 @@ function HomeScreen({ data, setData, goTo, openAddTx, toggleTheme }) {
                     <div className="tx__meta">{cat.name}{t.note ? ` · ${t.note}` : ""}</div>
                   </div>
                   <div className="tx__right">
-                    <div className={`tx__amount ${t.type === "expense" ? "c-neg" : "c-pos"}`}>
-                      {t.type === "expense" ? "−" : "+"}€{fmt(t.amount)}
+                    <div className={`tx__amount ${isSavingTx(t) ? "c-gold" : t.type === "expense" ? "c-neg" : "c-pos"}`}>
+                      {isSavingTx(t) || t.type === "expense" ? "−" : "+"}€{fmt(t.amount)}
                     </div>
                     <div className="tx__date">{dateStr(t.date)}</div>
                   </div>
@@ -1700,6 +1808,7 @@ function TransactionsScreen({ data, setData, openAddTx }) {
     let list = [...data.transactions].sort((a, b) => new Date(b.date) - new Date(a.date));
     if (filter === "expense") list = list.filter((t) => t.type === "expense");
     if (filter === "income") list = list.filter((t) => t.type === "income");
+    if (filter === "saving") list = list.filter((t) => isSavingTx(t));
     return list;
   }, [data.transactions, filter]);
 
@@ -1734,8 +1843,8 @@ function TransactionsScreen({ data, setData, openAddTx }) {
       </div>
       <div className="scroll">
         <div className="glass" style={{ padding: 4, marginBottom: 16 }}>
-          <div className="seg seg--3" role="radiogroup" aria-label="Filter">
-            {[["all", "Alle"], ["expense", "Ausgaben"], ["income", "Einnahmen"]].map(([f, label]) => (
+          <div className="seg seg--2" role="radiogroup" aria-label="Filter">
+            {[["all", "Alle"], ["expense", "Ausgaben"], ["income", "Einnahmen"], ["saving", "Sparen"]].map(([f, label]) => (
               <button key={f} className={`seg__opt ${filter === f ? "seg__opt--on" : ""}`}
                 onClick={() => setFilter(f)} role="radio" aria-checked={filter === f}>{label}</button>
             ))}
@@ -1762,8 +1871,8 @@ function TransactionsScreen({ data, setData, openAddTx }) {
                         <div className="tx__meta">{cat.name}{t.note ? ` · ${t.note}` : ""}</div>
                       </div>
                       <div className="tx__right">
-                        <div className={`tx__amount ${t.type === "expense" ? "c-neg" : "c-pos"}`}>
-                          {t.type === "expense" ? "−" : "+"}€{fmt(t.amount)}
+                        <div className={`tx__amount ${isSavingTx(t) ? "c-gold" : t.type === "expense" ? "c-neg" : "c-pos"}`}>
+                          {isSavingTx(t) || t.type === "expense" ? "−" : "+"}€{fmt(t.amount)}
                         </div>
                         <div className="tx__date">{dateStr(t.date)}</div>
                       </div>
@@ -1784,9 +1893,10 @@ function TransactionsScreen({ data, setData, openAddTx }) {
 
 function SavingsScreen({ data, setData }) {
   const [goalOpen, setGoalOpen] = useState(false);
-  const saveCats = ["sparen", "etf", "puffer", "sonstiges"];
+  const [depositGoal, setDepositGoal] = useState(null);
   const thisMonthTx = useMemo(() => data.transactions.filter((t) => isThisMonth(t.date)), [data.transactions]);
-  const saved = useMemo(() => thisMonthTx.filter((t) => saveCats.includes(t.cat)).reduce((a, t) => a + t.amount, 0), [thisMonthTx]);
+  const snap = useMemo(() => getBudgetSnapshot(data), [data]);
+  const saved = snap.savingTx;
   const target = useMemo(() => data.goals.reduce((a, g) => a + g.target, 0), [data.goals]);
   const pct = Math.min((saved / Math.max(target, 1)) * 100, 100);
 
@@ -1798,7 +1908,7 @@ function SavingsScreen({ data, setData }) {
         const td = new Date(t.date);
         return td.getMonth() === d.getMonth() && td.getFullYear() === d.getFullYear();
       });
-      const sv = mtx.filter((t) => saveCats.includes(t.cat)).reduce((a, t) => a + t.amount, 0);
+      const sv = mtx.filter((t) => isSavingTx(t)).reduce((a, t) => a + t.amount, 0);
       ms.push({ label: d.toLocaleDateString("de-DE", { month: "short" }), value: sv });
     }
     return ms;
@@ -1828,7 +1938,7 @@ function SavingsScreen({ data, setData }) {
         <div className="glass hero" style={{ marginBottom: 16 }}>
           <div className="hero__eyebrow">Gespart diesen Monat</div>
           <div className="hero__amount c-pos">€ {fmt(saved)}</div>
-          <div className="hero__sub">Ziel: € {fmt(target)} / Monat</div>
+          <div className="hero__sub">Ziel: € {fmt(target)} / Monat · Verfügbar: € {fmt(Math.max(snap.available, 0))}</div>
           <div className="progress" style={{ height: 6 }}>
             <div className="progress__fill" style={{ width: `${pct}%`, background: "linear-gradient(90deg, var(--accent), var(--accent-2))" }} />
           </div>
@@ -1841,7 +1951,7 @@ function SavingsScreen({ data, setData }) {
         ) : (
           data.goals.map((g) => {
             const cat = data.categories.find((c) => c.id === g.cat) || data.categories.at(-1);
-            const sv = thisMonthTx.filter((t) => t.cat === g.cat).reduce((a, t) => a + t.amount, 0);
+            const sv = thisMonthTx.filter((t) => t.cat === g.cat && isSavingTx(t)).reduce((a, t) => a + t.amount, 0);
             const p = Math.min((sv / Math.max(g.target, 1)) * 100, 100);
             const done = p >= 100;
             return (
@@ -1854,6 +1964,14 @@ function SavingsScreen({ data, setData }) {
                   </div>
                   <div>
                     <div className="goal-card__amounts">€{fmt(sv)}</div>
+                    <button
+                      className="tx__action-btn"
+                      style={{ float: "right", marginTop: 2 }}
+                      onClick={() => setDepositGoal(g)}
+                      aria-label={`In ${g.name} einzahlen`}
+                    >
+                      {icons.plus}
+                    </button>
                     <button className="tx__action-btn" style={{ float: "right", marginTop: 2 }}
                       onClick={() => delGoal(g.id)} aria-label={`${g.name} löschen`}>{icons.trash}</button>
                   </div>
@@ -1887,6 +2005,14 @@ function SavingsScreen({ data, setData }) {
         </div>
       </div>
       <GoalSheet open={goalOpen} onClose={() => setGoalOpen(false)} data={data} setData={setData} />
+      <SavingsDepositSheet
+        open={Boolean(depositGoal)}
+        onClose={() => setDepositGoal(null)}
+        goal={depositGoal}
+        availableBudget={Math.max(snap.available, 0)}
+        data={data}
+        setData={setData}
+      />
     </>
   );
 }
@@ -2156,12 +2282,7 @@ export default function BudgetSnap() {
               ...data,
               ...wizardData,
               wizardDone: true,
-              fixedCosts: wizardData.fixedCosts && wizardData.fixedCosts.length
-                ? wizardData.fixedCosts
-                : [
-                    { id: uid(), name: "Miete", amount: 850, cat: "miete", yearly: false, dueDay: 1 },
-                    { id: uid(), name: "Abos", amount: 50, cat: "abos", yearly: false, dueDay: 1 },
-                  ],
+              fixedCosts: wizardData.fixedCosts || [],
               goals: data.goals.length ? data.goals : [
                 { id: uid(), name: "Notgroschen", target: 300, cat: "sparen" },
                 { id: uid(), name: "ETF / Altersvorsorge", target: 150, cat: "etf" },
