@@ -383,6 +383,7 @@ const styles = `
     position: relative;
     transition: background var(--transition), color var(--transition);
     overflow-x: hidden;
+    width: 100%;
   }
 
   /* ── GLASS ── */
@@ -401,16 +402,19 @@ const styles = `
   /* ── WIZARD ── */
   .wizard {
     position: fixed; inset: 0; z-index: 1000;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    padding: 32px 24px;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    padding: max(20px, env(safe-area-inset-top, 20px)) 16px max(16px, env(safe-area-inset-bottom, 16px));
     background: var(--bg);
     animation: fadeIn 500ms ease both;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .wizard__step {
     display: flex; flex-direction: column; align-items: center;
     text-align: center; width: 100%; max-width: 360px;
     animation: slideUp 400ms cubic-bezier(0.4,0,0.2,1) both;
+    margin: auto 0;
   }
 
   .wizard__title {
@@ -714,6 +718,9 @@ const styles = `
     padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
     max-height: 90dvh; overflow-y: auto;
     animation: sheetUp 300ms cubic-bezier(0.4,0,0.2,1) both;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    will-change: transform;
   }
 
   .sheet__handle {
@@ -1012,6 +1019,34 @@ const styles = `
     .wizard__title { font-size: 44px; }
   }
 
+  @media (max-width: 420px) {
+    .wizard__card { padding: 14px; }
+    .form-group { padding: 12px 16px 0; }
+    .sheet__title { padding: 0 16px 12px; font-size: 20px; }
+    .cat-grid { grid-template-columns: repeat(3, 1fr); }
+    .wiz-fc-row { gap: 8px; padding: 10px; }
+    .wiz-fc-row__input { width: 84px; font-size: 16px; }
+  }
+
+  @media (max-height: 740px) {
+    .wizard__sub { margin-bottom: 16px; }
+    .wizard__card { margin-bottom: 12px; }
+    .wizard__title { font-size: clamp(26px, 6vw, 34px); }
+    .hero__amount { font-size: 40px; }
+  }
+
+  @media (orientation: landscape) and (max-height: 540px) {
+    .topbar { padding: 14px 12px 10px; }
+    .topbar__title { font-size: 22px; }
+    .scroll { padding: 10px 12px calc(78px + env(safe-area-inset-bottom, 0px)); }
+    .hero { padding: 14px; margin-bottom: 10px; }
+    .hero__amount { font-size: 34px; }
+    .wizard { padding: 10px 12px; }
+    .wizard__step { max-width: 520px; }
+    .wizard__card { max-height: 60dvh; overflow-y: auto; }
+    .sheet { max-height: 96dvh; }
+  }
+
   /* ── WIZARD FC ROWS ── */
   .wiz-fc-list { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 
@@ -1019,6 +1054,7 @@ const styles = `
     display: flex; align-items: center; gap: 12px; padding: 12px 16px;
     border-radius: var(--radius-sm); background: var(--surface);
     border: 1px solid var(--glass-border); transition: all var(--transition);
+    flex-wrap: nowrap;
   }
 
   .wiz-fc-row__icon {
@@ -1092,6 +1128,60 @@ const styles = `
 // COMPONENTS
 // ═══════════════════════════════════════════════════════
 
+function useSheetSwipeDown(onClose) {
+  const sheetRef = useRef(null);
+  const startY = useRef(0);
+  const startX = useRef(0);
+  const deltaY = useRef(0);
+  const dragging = useRef(false);
+
+  const onTouchStart = useCallback((e) => {
+    const el = sheetRef.current;
+    if (!el) return;
+    if (el.scrollTop > 2) return;
+    startY.current = e.touches[0].clientY;
+    startX.current = e.touches[0].clientX;
+    deltaY.current = 0;
+    dragging.current = true;
+    el.style.transition = "none";
+  }, []);
+
+  const onTouchMove = useCallback((e) => {
+    if (!dragging.current) return;
+    const dy = e.touches[0].clientY - startY.current;
+    const dx = e.touches[0].clientX - startX.current;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      dragging.current = false;
+      return;
+    }
+    if (dy < 0) return;
+    deltaY.current = dy;
+    const el = sheetRef.current;
+    if (!el) return;
+    e.preventDefault();
+    el.style.transform = `translateY(${dy}px)`;
+    el.style.opacity = String(Math.max(1 - dy / 380, 0.45));
+  }, []);
+
+  const onTouchEnd = useCallback(() => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    const el = sheetRef.current;
+    if (!el) return;
+    el.style.transition = "transform 240ms ease, opacity 240ms ease";
+    if (deltaY.current > 90) {
+      el.style.transform = "translateY(100%)";
+      el.style.opacity = "0";
+      setTimeout(onClose, 220);
+      return;
+    }
+    el.style.transform = "translateY(0)";
+    el.style.opacity = "1";
+  }, [onClose]);
+
+  return { sheetRef, onTouchStart, onTouchMove, onTouchEnd };
+}
+
 /* ── Wizard ── */
 function Wizard({ onComplete }) {
   const [step, setStep] = useState(0);
@@ -1107,10 +1197,8 @@ function Wizard({ onComplete }) {
     { id: "wfc_2", name: "Versicherung", amount: "", cat: "versicherung", icon: "shield", color: "#42A5F5", yearly: false },
   ]);
 
-  const [showAddFC, setShowAddFC] = useState(false);
   const [newFCName, setNewFCName] = useState("");
   const [newFCAmount, setNewFCAmount] = useState("");
-  const newFCRef = useRef(null);
 
   const updateFCAmount = (id, val) => {
     setWizFC((prev) => prev.map((fc) => (fc.id === id ? { ...fc, amount: val } : fc)));
@@ -1137,7 +1225,6 @@ function Wizard({ onComplete }) {
     ]);
     setNewFCName("");
     setNewFCAmount("");
-    setShowAddFC(false);
   };
 
   const fcTotal = wizFC.reduce((sum, fc) => sum + (parseFloat(fc.amount) || 0), 0);
@@ -1210,7 +1297,7 @@ function Wizard({ onComplete }) {
           <div className="wizard__sub">Damit ich dich persönlich begrüßen kann.</div>
           <div className="wizard__card glass">
             <input className="input" value={name} onChange={(e) => setName(e.target.value)}
-              placeholder="Dein Vorname…" autoFocus aria-label="Name"
+              placeholder="Dein Vorname…" aria-label="Name"
               onKeyDown={(e) => e.key === "Enter" && next()} />
           </div>
           <div style={{ display: "flex", gap: 8, width: "100%" }}>
@@ -1231,7 +1318,7 @@ function Wizard({ onComplete }) {
               <span className="input--amount__symbol">€</span>
               <input className="input--amount__field" type="number" value={income}
                 onChange={(e) => setIncome(e.target.value)} placeholder="0"
-                inputMode="decimal" autoFocus aria-label="Monatliches Einkommen"
+                inputMode="decimal" aria-label="Monatliches Einkommen"
                 onKeyDown={(e) => e.key === "Enter" && next()} />
             </div>
           </div>
@@ -1280,48 +1367,40 @@ function Wizard({ onComplete }) {
                 </div>
               ))}
 
-              {/* Add new row */}
-              {showAddFC ? (
-                <div className="wiz-fc-row" style={{ borderColor: "var(--accent)", background: "var(--accent-soft)" }}>
-                  <div className="wiz-fc-row__icon" style={{ background: "var(--accent)" }}>
-                    {icons.plus}
-                  </div>
-                  <input
-                    ref={newFCRef}
-                    className="wiz-fc-row__input"
-                    style={{ flex: 1, width: "auto", textAlign: "left", fontSize: 14, fontFamily: "'Outfit', sans-serif" }}
-                    value={newFCName}
-                    onChange={(e) => setNewFCName(e.target.value)}
-                    placeholder="Name…"
-                    autoFocus
-                    aria-label="Neue Fixkosten Name"
-                    onKeyDown={(e) => e.key === "Enter" && newFCName.trim() && addCustomFC()}
-                  />
-                  <input
-                    className="wiz-fc-row__input"
-                    type="number"
-                    inputMode="decimal"
-                    value={newFCAmount}
-                    onChange={(e) => setNewFCAmount(e.target.value)}
-                    placeholder="0"
-                    aria-label="Neue Fixkosten Betrag"
-                    onKeyDown={(e) => e.key === "Enter" && addCustomFC()}
-                  />
-                  <span className="wiz-fc-row__unit">€</span>
-                  <button
-                    className="wiz-fc-row__remove"
-                    onClick={() => { setShowAddFC(false); setNewFCName(""); setNewFCAmount(""); }}
-                    aria-label="Abbrechen"
-                    style={{ color: "var(--text-3)" }}
-                  >
-                    {icons.x}
-                  </button>
+              <div className="wiz-fc-row" style={{ borderColor: "var(--accent)", background: "var(--accent-soft)", flexWrap: "wrap" }}>
+                <div className="wiz-fc-row__icon" style={{ background: "var(--accent)" }}>
+                  {icons.plus}
                 </div>
-              ) : (
-                <button className="wiz-fc-add" onClick={() => setShowAddFC(true)}>
-                  {icons.plus} Weitere Fixkosten hinzufügen
+                <input
+                  className="wiz-fc-row__input"
+                  style={{ flex: "1 1 200px", width: "auto", textAlign: "left", fontSize: 14, fontFamily: "'Outfit', sans-serif" }}
+                  value={newFCName}
+                  onChange={(e) => setNewFCName(e.target.value)}
+                  placeholder="Neue Fixkosten (Name)"
+                  aria-label="Neue Fixkosten Name"
+                  onKeyDown={(e) => e.key === "Enter" && newFCName.trim() && addCustomFC()}
+                />
+                <input
+                  className="wiz-fc-row__input"
+                  type="number"
+                  inputMode="decimal"
+                  style={{ width: 110 }}
+                  value={newFCAmount}
+                  onChange={(e) => setNewFCAmount(e.target.value)}
+                  placeholder="0"
+                  aria-label="Neue Fixkosten Betrag"
+                  onKeyDown={(e) => e.key === "Enter" && addCustomFC()}
+                />
+                <span className="wiz-fc-row__unit">€</span>
+                <button
+                  className="wiz-fc-row__remove"
+                  onClick={addCustomFC}
+                  aria-label="Fixkosten hinzufügen"
+                  style={{ color: "var(--accent)" }}
+                >
+                  {icons.check}
                 </button>
-              )}
+              </div>
             </div>
 
             {/* Summary */}
@@ -1502,6 +1581,7 @@ function NotifBanner({ data }) {
 /* ── Add Transaction Sheet ── */
 function AddTxSheet({ open, onClose, data, setData }) {
   const safeCategories = Array.isArray(data.categories) && data.categories.length ? data.categories : defaultCategories;
+  const swipe = useSheetSwipeDown(onClose);
   const [type, setType] = useState("expense");
   const [amount, setAmount] = useState("");
   const [title, setTitle] = useState("");
@@ -1540,7 +1620,13 @@ function AddTxSheet({ open, onClose, data, setData }) {
 
   return (
     <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()} role="dialog" aria-label="Buchung hinzufügen" aria-modal="true">
-      <div className="sheet">
+      <div
+        className="sheet"
+        ref={swipe.sheetRef}
+        onTouchStart={swipe.onTouchStart}
+        onTouchMove={swipe.onTouchMove}
+        onTouchEnd={swipe.onTouchEnd}
+      >
         <div className="sheet__handle" />
         <div className="sheet__title">Buchung hinzufügen</div>
 
@@ -2534,6 +2620,8 @@ export default function BudgetSnap() {
   const [data, setData] = useState(loadData);
   const [tab, setTab] = useState("home");
   const [addTxOpen, setAddTxOpen] = useState(false);
+  const tabOrder = ["home", "transactions", "savings", "fixedcosts", "settings"];
+  const swipeStart = useRef({ x: 0, y: 0, active: false });
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", data.theme);
@@ -2547,6 +2635,25 @@ export default function BudgetSnap() {
   }, [data]);
 
   const goTo = useCallback((t) => setTab(t), []);
+
+  const onAppTouchStart = useCallback((e) => {
+    if (addTxOpen) return;
+    const target = e.target;
+    if (target && target.closest && target.closest("input, textarea, select, button, .sheet, .overlay")) return;
+    swipeStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, active: true };
+  }, [addTxOpen]);
+
+  const onAppTouchEnd = useCallback((e) => {
+    if (!swipeStart.current.active || addTxOpen) return;
+    const dx = e.changedTouches[0].clientX - swipeStart.current.x;
+    const dy = e.changedTouches[0].clientY - swipeStart.current.y;
+    swipeStart.current.active = false;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.25) return;
+    const idx = tabOrder.indexOf(tab);
+    if (idx === -1) return;
+    if (dx < 0 && idx < tabOrder.length - 1) setTab(tabOrder[idx + 1]);
+    if (dx > 0 && idx > 0) setTab(tabOrder[idx - 1]);
+  }, [addTxOpen, tab, tabOrder]);
 
   useEffect(() => {
     const currentMonth = getMonthKey(new Date());
@@ -2652,7 +2759,11 @@ export default function BudgetSnap() {
     <>
       <style>{styles}</style>
       <div className="app-root">
-        <div style={{ display: "flex", flexDirection: "column", height: "100dvh" }}>
+        <div
+          style={{ display: "flex", flexDirection: "column", height: "100dvh" }}
+          onTouchStart={onAppTouchStart}
+          onTouchEnd={onAppTouchEnd}
+        >
           {tab === "home" && <HomeScreen data={data} setData={setData} goTo={goTo} openAddTx={() => setAddTxOpen(true)} toggleTheme={toggleTheme} />}
           {tab === "transactions" && <TransactionsScreen data={data} setData={setData} openAddTx={() => setAddTxOpen(true)} />}
           {tab === "savings" && <SavingsScreen data={data} setData={setData} />}
