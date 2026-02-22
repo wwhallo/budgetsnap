@@ -1,0 +1,22 @@
+{
+  "name": "BudgetSnap",
+  "short_name": "BudgetSnap",
+  "description": "Dein elegantes, privates Kassenbuch",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F5F0E8",
+  "theme_color": "#3D7A5F",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
