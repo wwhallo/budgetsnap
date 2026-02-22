@@ -1182,3 +1182,4 @@ function GoalSheet({ open, onClose, data, setData }) {
     </div>
   );
 }
+export default BudgetSnap;
